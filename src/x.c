@@ -23,6 +23,7 @@
 #include <X11/Xft/Xft.h>
 #include <X11/XKBlib.h>
 #include <X11/Xresource.h>
+#include <Imlib2.h>
 
 char *argv0;
 #include "arg.h"
@@ -31,6 +32,10 @@ char *argv0;
 #include "graphics.h"
 #include "hb.h"
 // clang-format on
+
+#ifndef ICONPATH
+#define ICONPATH ""
+#endif
 
 /* types used in config.h */
 typedef struct {
@@ -117,7 +122,7 @@ typedef struct {
   Window win;
   Drawable buf;
   GlyphFontSpec* specbuf; /* font spec buffer used for rendering */
-  Atom xembed, wmdeletewin, netwmname, netwmiconname, netwmpid;
+  Atom xembed, wmdeletewin, netwmname, netwmicon, netwmiconname, netwmpid;
   Atom XdndTypeList, XdndSelection, XdndEnter, XdndPosition, XdndStatus,
     XdndLeave, XdndDrop, XdndFinished, XdndActionCopy, XdndActionMove,
     XdndActionLink, XdndActionAsk, XdndActionPrivate, XtextUriList, XtextPlain,
@@ -1272,8 +1277,10 @@ void xinit(int w, int h) {
   xw.xembed = XInternAtom(xw.dpy, "_XEMBED", False);
   xw.wmdeletewin = XInternAtom(xw.dpy, "WM_DELETE_WINDOW", False);
   xw.netwmname = XInternAtom(xw.dpy, "_NET_WM_NAME", False);
+  xw.netwmicon = XInternAtom(xw.dpy, "_NET_WM_ICON", False);
   xw.netwmiconname = XInternAtom(xw.dpy, "_NET_WM_ICON_NAME", False);
   XSetWMProtocols(xw.dpy, xw.win, &xw.wmdeletewin, 1);
+  xseticon(ICONPATH);
 
   xw.netwmpid = XInternAtom(xw.dpy, "_NET_WM_PID", False);
   XChangeProperty(xw.dpy, xw.win, xw.netwmpid, XA_CARDINAL, 32, PropModeReplace,
@@ -1975,6 +1982,38 @@ void xseticontitle(char* p) {
   XSetWMIconName(xw.dpy, xw.win, &prop);
   XSetTextProperty(xw.dpy, xw.win, &prop, xw.netwmiconname);
   XFree(prop.value);
+}
+
+void xseticon(const char* path) {
+  Imlib_Image img = imlib_load_image_without_cache(path);
+  if (!img) return;
+
+  imlib_context_set_image(img);
+
+  int w = imlib_image_get_width();
+  int h = imlib_image_get_height();
+  DATA32* data = imlib_image_get_data_for_reading_only();
+  if (!data) {
+    imlib_free_image();
+    return;
+  }
+
+  size_t npixels = (size_t)w * (size_t)h;
+  unsigned long* icon = xmalloc((npixels + 2) * sizeof(unsigned long));
+  icon[0] = w;
+  icon[1] = h;
+  if (imlib_image_has_alpha()) {
+    for (size_t i = 0; i < npixels; ++i) icon[i + 2] = data[i];
+  } else {
+    for (size_t i = 0; i < npixels; ++i) icon[i + 2] = data[i] | 0xFF000000;
+  }
+
+  XChangeProperty(xw.dpy, xw.win, xw.netwmicon, XA_CARDINAL, 32,
+                  PropModeReplace, (unsigned char*)icon,
+                  (int)(npixels + 2));
+
+  free(icon);
+  imlib_free_image();
 }
 
 void xsettitle(char* p) {

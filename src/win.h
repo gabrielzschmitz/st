@@ -37,6 +37,7 @@ void xloadcols(void);
 int xsetcolorname(int, const char*);
 int xgetcolor(int, unsigned char*, unsigned char*, unsigned char*);
 void xseticontitle(char*);
+void xseticon(const char*);
 void xsettitle(char*);
 int xsetcursor(int);
 void xsetmode(int, unsigned int);

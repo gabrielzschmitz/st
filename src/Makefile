@@ -50,11 +50,14 @@ install: st
 	cp -f st.desktop $(DESTDIR)$(APPPREFIX)
 	mkdir -p $(DESTDIR)$(ICONPREFIX)/hicolor/scalable/apps
 	cp -f ../st.svg $(DESTDIR)$(ICONPREFIX)/hicolor/scalable/apps/st.svg
+	mkdir -p $(DESTDIR)$(ICONPREFIX)/hicolor/256x256/apps
+	cp -f st.png $(DESTDIR)$(ICONPREFIX)/hicolor/256x256/apps/st.png
 
 uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/st
 	rm -f $(DESTDIR)$(APPPREFIX)/st.desktop
 	rm -f $(DESTDIR)$(MANPREFIX)/man1/st.1
 	rm -f $(DESTDIR)$(ICONPREFIX)/hicolor/scalable/apps/st.svg
+	rm -f $(DESTDIR)$(ICONPREFIX)/hicolor/256x256/apps/st.png
 
 .PHONY: all clean dist install uninstall

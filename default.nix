@@ -24,6 +24,10 @@ stdenv.mkDerivation {
     ncurses
   ];
 
+  makeFlags = [
+    "ICONPATH=${placeholder "out"}/share/icons/hicolor/256x256/apps/st.png"
+  ];
+
   buildInputs = [
     fontconfig
     freetype
@@ -52,8 +56,8 @@ stdenv.mkDerivation {
     mkdir -p $out/share/applications
     cp st.desktop $out/share/applications/st.desktop
 
-    mkdir -p $out/share/icons/hicolor/scalable/apps
-    cp ${./st.svg} $out/share/icons/hicolor/scalable/apps/st.svg
+    mkdir -p $out/share/icons/hicolor/256x256/apps
+    cp st.png $out/share/icons/hicolor/256x256/apps/st.png
 
     runHook postInstall
   '';

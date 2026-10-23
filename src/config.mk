@@ -7,6 +7,7 @@ VERSION = 0.9.3
 PREFIX = /usr/local
 APPPREFIX = $(PREFIX)/share/applications
 ICONPREFIX = $(PREFIX)/share/icons
+ICONPATH = $(ICONPREFIX)/hicolor/256x256/apps/st.png
 MANPREFIX = $(PREFIX)/share/man
 
 X11INC = /usr/X11R6/include
@@ -28,7 +29,7 @@ LIBS = -L$(X11LIB) -lm -lrt -lX11 -lutil -lXft -lXrender \
        `$(PKG_CONFIG) --libs harfbuzz`
 
 # flags
-STCPPFLAGS = -DVERSION=\"$(VERSION)\" -D_XOPEN_SOURCE=600
+STCPPFLAGS = -DVERSION=\"$(VERSION)\" -DICONPATH=\"$(ICONPATH)\" -D_XOPEN_SOURCE=600
 STCFLAGS = $(INCS) $(STCPPFLAGS) $(CPPFLAGS) $(CFLAGS)
 STLDFLAGS = $(LIBS) $(LDFLAGS)
 
