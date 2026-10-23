@@ -53,7 +53,7 @@ stdenv.mkDerivation {
     cp st.desktop $out/share/applications/st.desktop
 
     mkdir -p $out/share/icons/hicolor/scalable/apps
-    cp st.svg $out/share/icons/hicolor/scalable/apps/st.svg
+    cp ${./st.svg} $out/share/icons/hicolor/scalable/apps/st.svg
 
     runHook postInstall
   '';
