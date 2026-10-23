@@ -49,6 +49,12 @@ stdenv.mkDerivation {
     mkdir -p $out/share/terminfo
     TERMINFO=$out/share/terminfo tic -sx st.info
 
+    mkdir -p $out/share/applications
+    cp st.desktop $out/share/applications/st.desktop
+
+    mkdir -p $out/share/icons/hicolor/scalable/apps
+    cp st.svg $out/share/icons/hicolor/scalable/apps/st.svg
+
     runHook postInstall
   '';
 

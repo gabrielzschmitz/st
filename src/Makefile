@@ -48,10 +48,13 @@ install: st
 	@echo Please see the README file regarding the terminfo entry of st.
 	mkdir -p $(DESTDIR)$(APPPREFIX)
 	cp -f st.desktop $(DESTDIR)$(APPPREFIX)
+	mkdir -p $(DESTDIR)$(ICONPREFIX)/hicolor/scalable/apps
+	cp -f ../st.svg $(DESTDIR)$(ICONPREFIX)/hicolor/scalable/apps/st.svg
 
 uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/st
 	rm -f $(DESTDIR)$(APPPREFIX)/st.desktop
 	rm -f $(DESTDIR)$(MANPREFIX)/man1/st.1
+	rm -f $(DESTDIR)$(ICONPREFIX)/hicolor/scalable/apps/st.svg
 
 .PHONY: all clean dist install uninstall
