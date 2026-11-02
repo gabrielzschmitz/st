@@ -11,7 +11,7 @@
  * font: see http://freedesktop.org/software/fontconfig/fontconfig-user.html
  */
 static char* font =
-  "SFMono Nerd Font:pixelsize=20:antialias=true:autohint=true";
+  "SFMono Nerd Font:pixelsize=16:antialias=true:autohint=true";
 static int borderpx = 0;
 
 /* How to align the content in the window when the size of the terminal
