@@ -2009,8 +2009,7 @@ void xseticon(const char* path) {
   }
 
   XChangeProperty(xw.dpy, xw.win, xw.netwmicon, XA_CARDINAL, 32,
-                  PropModeReplace, (unsigned char*)icon,
-                  (int)(npixels + 2));
+                  PropModeReplace, (unsigned char*)icon, (int)(npixels + 2));
 
   free(icon);
   imlib_free_image();
