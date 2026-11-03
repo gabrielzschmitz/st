@@ -2056,19 +2056,18 @@ void gr_deinit() {
 /// Returns a string containing a time difference in a human-readable format.
 /// Uses a static buffer, so be careful.
 static const char* gr_ago(Milliseconds diff) {
-  static char result[32];
-  double seconds = (double)diff / 1000.0;
+  static char result[64];
+  unsigned long seconds = (unsigned long)(diff / 1000);
   if (seconds < 1)
-    snprintf(result, sizeof(result), "%.2f sec ago", seconds);
+    snprintf(result, sizeof(result), "%.2f sec ago", (double)seconds);
   else if (seconds < 60)
-    snprintf(result, sizeof(result), "%d sec ago", (int)seconds);
+    snprintf(result, sizeof(result), "%lu sec ago", seconds);
   else if (seconds < 3600)
-    snprintf(result, sizeof(result), "%d min %d sec ago", (int)(seconds / 60),
-             (int)(seconds) % 60);
+    snprintf(result, sizeof(result), "%lu min %lu sec ago", (seconds / 60),
+             (seconds) % 60);
   else {
-    snprintf(result, sizeof(result), "%d hr %d min %d sec ago",
-             (int)(seconds / 3600), (int)(seconds) % 3600 / 60,
-             (int)(seconds) % 60);
+    snprintf(result, sizeof(result), "%lu hr %lu min %lu sec ago",
+             seconds / 3600, (seconds % 3600) / 60, seconds % 60);
   }
   return result;
 }
