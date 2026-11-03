@@ -20,6 +20,7 @@ pkgs.mkShell {
     harfbuzz
     imlib2
     libX11
+    libXcursor
     libXext
     libXrender
     libXft

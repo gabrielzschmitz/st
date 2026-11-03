@@ -8,6 +8,7 @@
   harfbuzz,
   imlib2,
   libX11,
+  libXcursor,
   libXext,
   libXrender,
   libXft,
@@ -34,6 +35,7 @@ stdenv.mkDerivation {
     harfbuzz
     imlib2
     libX11
+    libXcursor
     libXext
     libXrender
     libXft

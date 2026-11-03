@@ -19,6 +19,7 @@
 #include <X11/Xatom.h>
 #include <X11/Xlib.h>
 #include <X11/cursorfont.h>
+#include <X11/Xcursor/Xcursor.h>
 #include <X11/keysym.h>
 #include <X11/Xft/Xft.h>
 #include <X11/XKBlib.h>
@@ -1257,7 +1258,7 @@ void xinit(int w, int h) {
   }
 
   /* white cursor, black outline */
-  cursor = XCreateFontCursor(xw.dpy, mouseshape);
+  cursor = XcursorLibraryLoadCursor(xw.dpy, "xterm");
   XDefineCursor(xw.dpy, xw.win, cursor);
 
   if (XParseColor(xw.dpy, xw.cmap, colorname[mousefg], &xmousefg) == 0) {
