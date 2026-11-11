@@ -98,6 +98,36 @@ image looks blank. Xvfb is useful for repeatability and correctness. Compare GPU
 performance on a real display. Results go to `benchmark-results.json`. See
 `python3 benchmarks/benchmark.py --help` for options.
 
+### Recording a baseline on the target machine
+
+Use a real display for GPU comparisons. Xvfb only measures software rendering.
+
+1. Pin the display refresh rate. Disable adaptive sync and any automatic
+   refresh switching for the duration of the run.
+2. Disable compositor effects that add latency, such as animations, blur, and
+   unredirect heuristics. Record whether the compositor was active.
+3. Keep resolution, font, font size, terminal geometry, and `st` build fixed.
+   Rebuild from the commit being measured.
+4. Run each workload several times with the repeatability check:
+
+   ```sh
+   python3 benchmarks/benchmark.py --repeat-check 5 --tolerance 10 \
+     --workloads stream redraw scroll --output baseline.json
+   ```
+
+   The check reports relative spread `(max-min)/median` for generation
+   throughput and `draw_ms_p95`, and exits non-zero when the spread exceeds the
+   tolerance.
+5. Record the `system`, `machine`, and `display` fields from the JSON with the
+   results. They identify the kernel, platform, and X display used for the run.
+6. Repeat the whole procedure in a separate session. The exit criterion is two
+   independent runs that agree within the chosen tolerance.
+
+Frame tracing reports `draw_ms`, `submit_ms`, and `present_ms`. `present_ms`
+covers a benchmark-only `XSync` round trip, which shows when the server has
+processed the flush. It still does not prove that a compositor presented the
+frame, so compare medians under identical conditions.
+
 <details>
 <summary><b>With Nix (`default.nix`)</b></summary>
 
