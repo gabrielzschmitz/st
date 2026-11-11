@@ -184,8 +184,6 @@ static int xmakeglyphfontspecs(XftGlyphFontSpec*, const Glyph*, int, int, int);
 static void xdrawglyphfontspecs(const XftGlyphFontSpec*, Glyph, int, int, int,
                                 int, int);
 static void xdrawglyph(Glyph, int, int);
-static void xdrawimages(Glyph, Line, int x1, int y1, int x2);
-static void xdrawoneimagecell(Glyph, int x, int y);
 static void xclear(int, int, int, int);
 static int xgeommasktogravity(int);
 static int ximopen(Display*);
@@ -194,7 +192,7 @@ static void ximdestroy(XIM, XPointer, XPointer);
 static int xicdestroy(XIC, XPointer, XPointer);
 static void xinit(int, int);
 static void cresize(int, int);
-static void xresize(int, int);
+void xresize(int, int);
 static void xhints(void);
 static int xloadcolor(int, const char*, Color*);
 static int xloadfont(Font*, FcPattern*);

@@ -6,7 +6,8 @@ include config.mk
 
 PYTHON = python3
 
-SRC = st.c x.c rowcolumn_diacritics_helpers.c graphics.c boxdraw.c hb.c trace.c
+SRC = st.c x.c rowcolumn_diacritics_helpers.c graphics.c boxdraw.c hb.c trace.c \
+	render_xft.c
 OBJ = $(SRC:.c=.o)
 XCAPTURE = ../benchmarks/xcapture
 
@@ -24,6 +25,7 @@ graphics.c: graphics.h khash.h kvec.h st.h
 boxdraw.o: config.h st.h boxdraw_data.h
 hb.o: st.h
 trace.o: trace.h
+render_xft.o: render.h win.h st.h
 
 $(OBJ): config.h config.mk
 

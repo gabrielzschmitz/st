@@ -48,3 +48,6 @@ void xximspot(int, int);
 
 void xstartimagedraw(int* dirty, int rows);
 void xfinishimagedraw();
+void xdrawimages(Glyph, Line, int, int, int);
+void xdrawoneimagecell(Glyph, int, int);
+void xresize(int, int);
