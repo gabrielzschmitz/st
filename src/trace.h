@@ -11,7 +11,7 @@
 #include <stdint.h>
 
 #define TRACE_MAGIC 0x53544254u /* "STBT" */
-#define TRACE_VERSION 1u
+#define TRACE_VERSION 2u
 
 typedef struct {
   uint32_t magic;
@@ -20,15 +20,18 @@ typedef struct {
   uint32_t reserved;
 } TraceHeader;
 
+/* Version 2 record. Version 1 had no sync_ns field. */
 typedef struct {
   uint64_t frame;
   uint64_t trigger_ns;
   uint64_t draw_ns;
   uint64_t flush_ns;
+  uint64_t sync_ns;
   uint64_t cells;
 } TraceRecord;
 
 void trace_init(const char* path);
+void trace_set_sync(void (*sync)(void*), void* data);
 void trace_frame_trigger(void);
 void trace_frame_begin(void);
 void trace_frame_end(uint64_t cells);

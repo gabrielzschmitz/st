@@ -18,9 +18,11 @@ import zlib
 from pathlib import Path
 
 TRACE_MAGIC = 0x53544254
-TRACE_VERSION = 1
 TRACE_HEADER = struct.Struct("<4I")
-TRACE_RECORD = struct.Struct("<5Q")
+TRACE_RECORDS = {
+    1: struct.Struct("<5Q"),
+    2: struct.Struct("<6Q"),
+}
 
 
 def write_all(fd, data):
@@ -158,23 +160,29 @@ def parse_trace(path):
     if len(data) < TRACE_HEADER.size:
         raise RuntimeError(f"trace file is truncated: {path}")
     magic, version, record_size, _ = TRACE_HEADER.unpack_from(data)
-    if magic != TRACE_MAGIC or version != TRACE_VERSION:
+    record = TRACE_RECORDS.get(version)
+    if magic != TRACE_MAGIC or record is None:
         raise RuntimeError(f"unsupported trace format: {path}")
-    if record_size != TRACE_RECORD.size or (len(data) - TRACE_HEADER.size) % record_size:
+    if record_size != record.size or (len(data) - TRACE_HEADER.size) % record_size:
         raise RuntimeError(f"invalid trace record size: {path}")
 
     frames = []
     offset = TRACE_HEADER.size
     while offset < len(data):
-        frame, trigger_ns, draw_ns, flush_ns, cells = TRACE_RECORD.unpack_from(data, offset)
+        fields = record.unpack_from(data, offset)
         offset += record_size
+        frame, trigger_ns, draw_ns, flush_ns = fields[:4]
+        sync_ns, cells = (fields[4], fields[5]) if version >= 2 else (0, fields[4])
         if not draw_ns or flush_ns < draw_ns:
             continue
+        present_ns = sync_ns if sync_ns >= flush_ns else None
         frames.append({
             "frame": frame,
             "wait_ms": (draw_ns - trigger_ns) / 1e6 if trigger_ns else None,
             "draw_ms": (flush_ns - draw_ns) / 1e6,
             "submit_ms": (flush_ns - trigger_ns) / 1e6 if trigger_ns else None,
+            "present_ms": (present_ns - trigger_ns) / 1e6
+            if present_ns and trigger_ns else None,
             "cells": cells,
         })
     if not frames:
@@ -182,6 +190,7 @@ def parse_trace(path):
 
     draws = [frame["draw_ms"] for frame in frames]
     submits = [frame["submit_ms"] for frame in frames if frame["submit_ms"] is not None]
+    presents = [frame["present_ms"] for frame in frames if frame["present_ms"] is not None]
     return {
         "frames": len(frames),
         "cells": sum(frame["cells"] for frame in frames),
@@ -191,6 +200,9 @@ def parse_trace(path):
         "submit_ms_p50": percentile(submits, 0.50),
         "submit_ms_p95": percentile(submits, 0.95),
         "submit_ms_max": max(submits) if submits else None,
+        "present_ms_p50": percentile(presents, 0.50),
+        "present_ms_p95": percentile(presents, 0.95),
+        "present_ms_max": max(presents) if presents else None,
     }
 
 
@@ -327,7 +339,8 @@ def summarize(results, workloads):
         }
         if traced:
             for key in ("draw_ms_p50", "draw_ms_p95", "draw_ms_max",
-                        "submit_ms_p50", "submit_ms_p95", "submit_ms_max"):
+                        "submit_ms_p50", "submit_ms_p95", "submit_ms_max",
+                        "present_ms_p50", "present_ms_p95", "present_ms_max"):
                 values = [
                     row["frame_trace"][key] for row in traced
                     if row["frame_trace"][key] is not None

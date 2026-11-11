@@ -2361,6 +2361,8 @@ void resize(XEvent* e) {
 int tinsync(uint);
 int ttyread_pending();
 
+static void trace_xsync(void* data) { XSync((Display*)data, False); }
+
 void run(void) {
   XEvent ev;
   int w = win.w, h = win.h;
@@ -2674,6 +2676,7 @@ run:
   tnew(cols, rows);
   xsetenv();
   selinit();
+  trace_set_sync(trace_xsync, xw.dpy);
   run();
   trace_finish();
 

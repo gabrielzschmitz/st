@@ -19,6 +19,8 @@ static uint64_t trace_frame_number;
 static uint64_t trace_trigger_ns;
 static uint64_t trace_draw_ns;
 static uint64_t trace_cells;
+static void (*trace_sync_cb)(void*);
+static void* trace_sync_data;
 
 static uint64_t monotonic_ns(void) {
   struct timespec ts;
@@ -52,6 +54,11 @@ void trace_init(const char* path) {
   write_all(trace_fd, &header, sizeof(header));
 }
 
+void trace_set_sync(void (*sync)(void*), void* data) {
+  trace_sync_cb = sync;
+  trace_sync_data = data;
+}
+
 void trace_frame_trigger(void) {
   if (trace_fd < 0) return;
   trace_trigger_ns = monotonic_ns();
@@ -75,8 +82,13 @@ void trace_frame_flush(void) {
     .trigger_ns = trace_trigger_ns,
     .draw_ns = trace_draw_ns,
     .flush_ns = monotonic_ns(),
+    .sync_ns = 0,
     .cells = trace_cells,
   };
+  if (trace_sync_cb) {
+    trace_sync_cb(trace_sync_data);
+    record.sync_ns = monotonic_ns();
+  }
   write_all(trace_fd, &record, sizeof(record));
   trace_trigger_ns = 0;
   trace_draw_ns = 0;
