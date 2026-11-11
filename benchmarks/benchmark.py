@@ -290,6 +290,11 @@ def parse_args():
     parser.add_argument("--workloads", nargs="+", choices=workloads,
                         default=["stream", "redraw", "scroll"])
     parser.add_argument("--repetitions", type=int, default=5)
+    parser.add_argument("--repeat-check", type=int, metavar="N",
+                        help="run each workload N times and check spread")
+    parser.add_argument("--tolerance", type=float, default=10.0, metavar="PERCENT",
+                        help="maximum relative spread for --repeat-check "
+                             "(default: 10)")
     parser.add_argument("--mib", type=int, default=16, help="stream workload size per trial")
     parser.add_argument("--iterations", type=int, default=250, help="redraw/scroll cycles")
     parser.add_argument("--cols", type=int, default=120)
@@ -309,10 +314,16 @@ def parse_args():
     args = parser.parse_args()
     if args.worker:
         return args
+    if args.repeat_check is not None:
+        if args.repeat_check < 2:
+            parser.error("repeat-check must run at least 2 trials")
+        args.repetitions = args.repeat_check
     if min(args.repetitions, args.mib, args.iterations, args.cols, args.rows) < 1:
         parser.error("repetitions, mib, iterations, cols, and rows must be positive")
     if args.settle_ms < 0 or args.timeout < 1:
         parser.error("settle-ms must be non-negative and timeout must be positive")
+    if args.tolerance <= 0:
+        parser.error("tolerance must be positive")
     if args.capture:
         args.capture = shutil.which(args.capture) or args.capture
         if not Path(args.capture).is_file():
@@ -354,6 +365,64 @@ def summarize(results, workloads):
             entry["render_valid"] = all(row["render_valid"] for row in validated)
         medians[workload] = entry
     return medians
+
+
+def relative_spread(values):
+    values = [value for value in values if value is not None]
+    if len(values) < 2:
+        return None
+    middle = statistics.median(values)
+    if middle == 0:
+        return None
+    return (max(values) - min(values)) / middle
+
+
+def repeatability_report(results, workloads, tolerance):
+    limit = tolerance / 100.0
+    report = {}
+    failures = []
+    for workload in workloads:
+        group = [row for row in results if row["workload"] == workload]
+        throughput = relative_spread(row["mib_per_second"] for row in group)
+        draw_p95 = relative_spread(
+            row["frame_trace"]["draw_ms_p95"] for row in group
+            if "frame_trace" in row
+        )
+        exceeded = [
+            name for name, spread in (
+                ("generation_mib_per_second", throughput),
+                ("draw_ms_p95", draw_p95),
+            )
+            if spread is not None and spread > limit
+        ]
+        report[workload] = {
+            "trials": len(group),
+            "generation_spread": throughput,
+            "draw_ms_p95_spread": draw_p95,
+            "within_tolerance": not exceeded,
+        }
+        if exceeded:
+            failures.append(f"{workload}: {', '.join(exceeded)}")
+    return report, failures
+
+
+def print_repeatability(report, tolerance):
+    for workload, entry in report.items():
+        parts = []
+        if entry["generation_spread"] is not None:
+            parts.append(
+                f"generation {entry['generation_spread'] * 100:.1f}% spread"
+            )
+        if entry["draw_ms_p95_spread"] is not None:
+            parts.append(
+                f"draw p95 {entry['draw_ms_p95_spread'] * 100:.1f}% spread"
+            )
+        status = "ok" if entry["within_tolerance"] else "EXCEEDS"
+        detail = ", ".join(parts) if parts else "not enough samples"
+        print(
+            f"repeat check {workload}: {detail}, "
+            f"tolerance {tolerance:g}%, {status}"
+        )
 
 
 def main():
@@ -409,13 +478,30 @@ def main():
                     "cols": args.cols, "rows": args.rows, "mib": args.mib,
                     "iterations": args.iterations, "settle_ms": args.settle_ms,
                     "repetitions": args.repetitions,
+                    "repeat_check": args.repeat_check,
+                    "tolerance_percent": args.tolerance,
                 },
                 "results": results,
                 "medians": summarize(results, args.workloads),
             }
+            failures = []
+            if args.repeat_check:
+                report, failures = repeatability_report(
+                    results, args.workloads, args.tolerance
+                )
+                summary["repeat_check"] = {
+                    "tolerance_percent": args.tolerance,
+                    "workloads": report,
+                }
             Path(args.output).write_text(json.dumps(summary, indent=2) + "\n",
                                          encoding="utf-8")
             print(f"Results written to {args.output}")
+            if args.repeat_check:
+                print_repeatability(report, args.tolerance)
+                if failures:
+                    raise RuntimeError(
+                        "repeat check exceeded tolerance for " + "; ".join(failures)
+                    )
     finally:
         if xvfb:
             xvfb.terminate()
