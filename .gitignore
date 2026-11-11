@@ -3,3 +3,5 @@ config.h
 st
 result
 benchmark-results.json
+__pycache__/
+benchmarks/xcapture

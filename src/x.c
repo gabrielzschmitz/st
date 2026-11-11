@@ -32,6 +32,7 @@ char *argv0;
 #include "win.h"
 #include "graphics.h"
 #include "hb.h"
+#include "trace.h"
 // clang-format on
 
 #ifndef ICONPATH
@@ -2245,6 +2246,7 @@ void cmessage(XEvent* e) {
   } else if (e->xclient.data.l[0] == xw.wmdeletewin) {
     ttyhangup();
     gr_deinit();
+    trace_finish();
     exit(0);
   } else if (e->xclient.message_type == xw.XdndEnter) {
     xw.XdndSourceWin = e->xclient.data.l[0];
@@ -2433,6 +2435,7 @@ void run(void) {
     if (ttyin || xev) {
       if (!drawing) {
         trigger = now;
+        trace_frame_trigger();
         if (IS_SET(MODE_BLINK)) {
           win.mode ^= MODE_BLINK;
         }
@@ -2471,6 +2474,7 @@ void run(void) {
 
     draw();
     XFlush(xw.dpy);
+    trace_frame_flush();
     drawing = 0;
   }
 }
@@ -2650,6 +2654,7 @@ run:
 
   if (!opt_title) opt_title = (opt_line || !opt_cmd) ? "st" : opt_cmd[0];
 
+  trace_init(getenv("ST_BENCH_TRACE"));
   setlocale(LC_CTYPE, "");
   XSetLocaleModifiers("");
   xrdb_load();
@@ -2670,6 +2675,7 @@ run:
   xsetenv();
   selinit();
   run();
+  trace_finish();
 
   return 0;
 }

@@ -6,8 +6,9 @@ include config.mk
 
 PYTHON = python3
 
-SRC = st.c x.c rowcolumn_diacritics_helpers.c graphics.c boxdraw.c hb.c
+SRC = st.c x.c rowcolumn_diacritics_helpers.c graphics.c boxdraw.c hb.c trace.c
 OBJ = $(SRC:.c=.o)
+XCAPTURE = ../benchmarks/xcapture
 
 all: st
 
@@ -17,11 +18,12 @@ config.h:
 .c.o:
 	$(CC) $(STCFLAGS) -c $<
 
-st.o: config.h st.h win.h graphics.h
-x.o: arg.h config.h st.h win.h graphics.h hb.h
+st.o: config.h st.h win.h graphics.h trace.h
+x.o: arg.h config.h st.h win.h graphics.h hb.h trace.h
 graphics.c: graphics.h khash.h kvec.h st.h
 boxdraw.o: config.h st.h boxdraw_data.h
 hb.o: st.h
+trace.o: trace.h
 
 $(OBJ): config.h config.mk
 
@@ -29,13 +31,18 @@ st: $(OBJ)
 	$(CC) -o $@ $(OBJ) $(STLDFLAGS)
 
 clean:
-	rm -f st config.h $(OBJ) st-$(VERSION).tar.gz
+	rm -f st config.h $(OBJ) st-$(VERSION).tar.gz $(XCAPTURE)
 
-benchmark: st
-	$(PYTHON) ../benchmarks/benchmark.py --st ./st --output ../benchmark-results.json
+$(XCAPTURE): ../benchmarks/xcapture.c
+	$(CC) -o $@ ../benchmarks/xcapture.c $(INCS) -lX11
 
-benchmark-xvfb: st
-	$(PYTHON) ../benchmarks/benchmark.py --st ./st --xvfb --output ../benchmark-results.json
+benchmark: st $(XCAPTURE)
+	$(PYTHON) ../benchmarks/benchmark.py --st ./st --capture $(XCAPTURE) \
+		--output ../benchmark-results.json
+
+benchmark-xvfb: st $(XCAPTURE)
+	$(PYTHON) ../benchmarks/benchmark.py --st ./st --xvfb --capture $(XCAPTURE) \
+		--output ../benchmark-results.json
 
 dist: clean
 	mkdir -p st-$(VERSION)

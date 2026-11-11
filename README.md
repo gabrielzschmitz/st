@@ -86,10 +86,16 @@ The benchmark uses current `DISPLAY`. Run on an isolated virtual X server with
 display to compare GPU-backed renderers.
 
 Workloads cover sustained output, repeated full-screen redraws, scrollback, and
-Kitty image upload/display.
-Each run reports output-generation throughput and terminal-process lifetime.
-The latter includes startup and shutdown, so compare medians on the same machine
-and display. Results go to `benchmark-results.json`. See
+Kitty image upload/display. Each trial records output-generation throughput,
+child CPU time, terminal-process lifetime, and frame trace percentiles:
+`draw_ms` is renderer work from draw start to frame flush, and `submit_ms` is
+trigger-to-flush latency. These are client-side measurements; they do not prove
+that the X server or compositor presented a frame.
+
+With `--capture`, the benchmark draws a colored test pattern, captures the
+window through the small `benchmarks/xcapture` X11 helper, and fails trials whose
+image looks blank. Xvfb is useful for repeatability and correctness. Compare GPU
+performance on a real display. Results go to `benchmark-results.json`. See
 `python3 benchmarks/benchmark.py --help` for options.
 
 <details>

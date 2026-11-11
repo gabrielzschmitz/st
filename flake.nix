@@ -41,7 +41,7 @@
               bear
               clang-tools
               python3
-              xorg.xorgserver
+              xorg-server
             ];
           };
         }

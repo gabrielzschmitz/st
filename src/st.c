@@ -27,6 +27,7 @@
 #include "st.h"
 #include "win.h"
 #include "graphics.h"
+#include "trace.h"
 // clang-format on
 
 #if defined(__linux)
@@ -2771,6 +2772,7 @@ void resettitle(void) { xsettitle(NULL); }
 
 void drawregion(int x1, int y1, int x2, int y2) {
   int y, L;
+  uint64_t cells = 0;
 
   xstartimagedraw(term.dirty, term.row);
 
@@ -2778,18 +2780,24 @@ void drawregion(int x1, int y1, int x2, int y2) {
   for (y = y1; y < y2; y++) {
     if (term.dirty[y]) {
       term.dirty[y] = 0;
+      cells += (uint64_t)(x2 - x1);
       xdrawline(TSCREEN.buffer[L], x1, y, x2);
     }
     L = (L + 1) % TSCREEN.size;
   }
 
   xfinishimagedraw();
+  trace_frame_end(cells);
 }
 
 void draw(void) {
   int cx = term.c.x, ocx = term.ocx, ocy = term.ocy;
 
-  if (!xstartdraw()) return;
+  trace_frame_begin();
+  if (!xstartdraw()) {
+    trace_frame_cancel();
+    return;
+  }
 
   /* adjust cursor position */
   LIMIT(term.ocx, 0, term.col - 1);
