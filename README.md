@@ -73,6 +73,25 @@ sudo nixos-rebuild switch --flake .#nixos
 
 </details>
 
+## Renderer benchmarks
+
+Build `st`, then run repeatable terminal-output benchmarks:
+
+```sh
+make -C src benchmark
+```
+
+The benchmark uses current `DISPLAY`. Run on an isolated virtual X server with
+`make -C src benchmark-xvfb`. Xvfb measures software rendering; use a real
+display to compare GPU-backed renderers.
+
+Workloads cover sustained output, repeated full-screen redraws, scrollback, and
+Kitty image upload/display.
+Each run reports output-generation throughput and terminal-process lifetime.
+The latter includes startup and shutdown, so compare medians on the same machine
+and display. Results go to `benchmark-results.json`. See
+`python3 benchmarks/benchmark.py --help` for options.
+
 <details>
 <summary><b>With Nix (`default.nix`)</b></summary>
 

@@ -12,6 +12,8 @@ pkgs.mkShell {
     gcc
     bear
     clang-tools
+    python3
+    xorg.xorgserver
   ];
 
   buildInputs = with pkgs; [

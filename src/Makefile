@@ -4,6 +4,8 @@
 
 include config.mk
 
+PYTHON = python3
+
 SRC = st.c x.c rowcolumn_diacritics_helpers.c graphics.c boxdraw.c hb.c
 OBJ = $(SRC:.c=.o)
 
@@ -28,6 +30,12 @@ st: $(OBJ)
 
 clean:
 	rm -f st config.h $(OBJ) st-$(VERSION).tar.gz
+
+benchmark: st
+	$(PYTHON) ../benchmarks/benchmark.py --st ./st --output ../benchmark-results.json
+
+benchmark-xvfb: st
+	$(PYTHON) ../benchmarks/benchmark.py --st ./st --xvfb --output ../benchmark-results.json
 
 dist: clean
 	mkdir -p st-$(VERSION)
@@ -60,4 +68,4 @@ uninstall:
 	rm -f $(DESTDIR)$(ICONPREFIX)/hicolor/scalable/apps/st.svg
 	rm -f $(DESTDIR)$(ICONPREFIX)/hicolor/256x256/apps/st.png
 
-.PHONY: all clean dist install uninstall
+.PHONY: all benchmark benchmark-xvfb clean dist install uninstall
