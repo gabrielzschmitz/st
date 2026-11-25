@@ -75,12 +75,15 @@ sudo nixos-rebuild switch --flake .#nixos
 
 ## Renderer selection
 
-`ST_RENDERER` selects the drawing backend. The default is `xft`. That is also
-the only supported value. An unknown value prints an error and exits before the
-window opens.
+`ST_RENDERER` selects the drawing backend. The default is `xft`. Build with
+`ST_WITH_GL=1` to enable the `gl` value, which creates a GLX context. Drawing
+still uses Xft in that mode. An unknown value prints an error and exits before
+the window opens.
 
 ```sh
 ST_RENDERER=xft st
+make -C src ST_WITH_GL=1
+ST_RENDERER=gl src/st
 ```
 
 ## Renderer benchmarks

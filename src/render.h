@@ -62,4 +62,7 @@ const RendererOps* renderer_current(void);
 /** Select a renderer by name. An unknown name is fatal. */
 void renderer_select(const char* name);
 
+/** Release renderer-owned resources before exit. */
+void renderer_deinit(void);
+
 #endif

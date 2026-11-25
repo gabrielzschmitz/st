@@ -8,6 +8,9 @@ PYTHON = python3
 
 SRC = st.c x.c rowcolumn_diacritics_helpers.c graphics.c boxdraw.c hb.c trace.c \
 	render_xft.c
+ifeq ($(ST_WITH_GL),1)
+SRC += render_gl.c
+endif
 OBJ = $(SRC:.c=.o)
 XCAPTURE = ../benchmarks/xcapture
 
@@ -26,6 +29,9 @@ boxdraw.o: config.h st.h boxdraw_data.h
 hb.o: st.h
 trace.o: trace.h
 render_xft.o: render.h win.h st.h
+ifeq ($(ST_WITH_GL),1)
+render_gl.o: render.h render_gl.h win.h st.h
+endif
 
 $(OBJ): config.h config.mk
 
@@ -49,7 +55,7 @@ benchmark-xvfb: st $(XCAPTURE)
 dist: clean
 	mkdir -p st-$(VERSION)
 	cp -R FAQ LEGACY TODO LICENSE Makefile README config.mk\
-		config.def.h st.info st.1 arg.h st.h win.h $(SRC)\
+		config.def.h st.info st.1 arg.h st.h win.h render.h render_gl.h $(SRC)\
 		st-$(VERSION)
 	tar -cf - st-$(VERSION) | gzip > st-$(VERSION).tar.gz
 	rm -rf st-$(VERSION)

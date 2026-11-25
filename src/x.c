@@ -34,6 +34,9 @@ char *argv0;
 #include "hb.h"
 #include "trace.h"
 #include "render.h"
+#ifdef ST_WITH_GL
+#include "render_gl.h"
+#endif
 // clang-format on
 
 #ifndef ICONPATH
@@ -936,9 +939,25 @@ const RendererOps* renderer_current(void) { return renderer; }
 
 void renderer_select(const char* name) {
   if (!name) name = "xft";
+#ifdef ST_WITH_GL
+  if (strcmp(name, "gl") == 0) {
+    renderer = &render_gl_ops;
+    return;
+  }
+#endif
   if (strcmp(name, "xft") != 0)
+#ifdef ST_WITH_GL
+    die("st: unknown renderer '%s'; valid renderers: xft, gl\n", name);
+#else
     die("st: unknown renderer '%s'; valid renderer: xft\n", name);
+#endif
   renderer = &render_xft_ops;
+}
+
+void renderer_deinit(void) {
+#ifdef ST_WITH_GL
+  if (renderer == &render_gl_ops) gl_deinit();
+#endif
 }
 
 Display* xft_display(void) { return xw.dpy; }
@@ -1270,6 +1289,22 @@ void xinit(int w, int h) {
 
   /* Xft rendering context */
   xw.draw = XftDrawCreate(xw.dpy, xw.buf, xw.vis, xw.cmap);
+
+#ifdef ST_WITH_GL
+  if (renderer == &render_gl_ops) {
+    XVisualInfo vinfo = {.visualid = XVisualIDFromVisual(xw.vis)};
+    XVisualInfo* glvis;
+    int nvis = 0;
+
+    glvis = XGetVisualInfo(xw.dpy, VisualIDMask, &vinfo, &nvis);
+    if (!glvis || nvis == 0) die("st: no GLX visual for window\n");
+    if (!gl_init(xw.dpy, xw.win, glvis)) {
+      XFree(glvis);
+      die("st: cannot create GLX context\n");
+    }
+    XFree(glvis);
+  }
+#endif
 
   /* input methods */
   if (!ximopen(xw.dpy)) {
@@ -2204,6 +2239,7 @@ void cmessage(XEvent* e) {
     }
   } else if (e->xclient.data.l[0] == xw.wmdeletewin) {
     ttyhangup();
+    renderer_deinit();
     gr_deinit();
     trace_finish();
     exit(0);
