@@ -207,6 +207,9 @@ static GlGlyphEntry* gl_atlas_get(XftFont* font, unsigned int glyph) {
   pixel_size = gl_font_pixel_size(font);
   style = gl_font_style(font);
 
+  /* The face pointer is part of the key. Fallback faces from frc[] therefore
+   * cannot collide with the primary face or with each other, even when they
+   * assign the same glyph index. */
   for (i = 0; i < GL_ATLAS_ENTRIES; i++) {
     GlGlyphEntry* candidate = &gl_atlas_entries[i];
     if (candidate->valid && candidate->font == font &&
