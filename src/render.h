@@ -48,6 +48,9 @@ struct RendererOps {
                       const void* rgba);
   void (*image_free)(uint32_t image_id);
   void (*resources_reset)(void);
+
+  /** Optional backend debug hook. Returns 0 on success, -1 on failure. */
+  int (*debug_glyph_ppm)(uint32_t codepoint, const char* path);
 };
 
 /** Xft renderer implementation. */

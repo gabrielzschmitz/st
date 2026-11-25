@@ -11,12 +11,18 @@
 
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
+#include <X11/Xft/Xft.h>
 #include <GL/gl.h>
 #include <GL/glx.h>
 #include <GL/glxext.h>
+#include <ft2build.h>
+#include FT_FREETYPE_H
 
 #include "render.h"
 #include "render_gl.h"
+
+extern Display* xft_display(void);
+extern XftFont* xft_normal_font(void);
 
 typedef void (*gl_swap_interval_ext_fn)(Display*, GLXDrawable, int);
 typedef void (*gl_query_drawable_ext_fn)(Display*, GLXDrawable, int,
@@ -37,6 +43,58 @@ static void gl_clear_background(void) {
   glClearColor(bg.red / 65535.0f, bg.green / 65535.0f, bg.blue / 65535.0f,
                bg.alpha / 65535.0f);
   glClear(GL_COLOR_BUFFER_BIT);
+}
+
+static int gl_write_glyph_ppm(const FT_Bitmap* bitmap, const char* path) {
+  size_t pitch = (size_t)(bitmap->pitch < 0 ? -bitmap->pitch : bitmap->pitch);
+  FILE* fp = fopen(path, "wb");
+  unsigned int y, x;
+
+  if (!fp || bitmap->width == 0 || bitmap->rows == 0) {
+    if (fp) fclose(fp);
+    return -1;
+  }
+  if (fprintf(fp, "P6\n%u %u\n255\n", bitmap->width, bitmap->rows) < 0)
+    goto fail;
+
+  for (y = 0; y < bitmap->rows; y++) {
+    const unsigned char* row = bitmap->buffer + y * pitch;
+    for (x = 0; x < bitmap->width; x++) {
+      if (fputc(row[x], fp) == EOF || fputc(row[x], fp) == EOF ||
+          fputc(row[x], fp) == EOF)
+        goto fail;
+    }
+  }
+
+  if (fclose(fp) != 0) return -1;
+  return 0;
+
+fail:
+  fclose(fp);
+  return -1;
+}
+
+static int gl_debug_glyph_ppm(uint32_t codepoint, const char* path) {
+  XftFont* font = xft_normal_font();
+  FT_UInt glyph;
+  FT_Face face;
+  int result;
+
+  if (!font || !path || !*path) return -1;
+  glyph = XftCharIndex(xft_display(), font, (FcChar32)codepoint);
+  if (!glyph) return -1;
+
+  face = XftLockFace(font);
+  if (!face) return -1;
+  if (FT_Load_Glyph(face, glyph, FT_LOAD_DEFAULT) != 0 ||
+      FT_Render_Glyph(face->glyph, FT_RENDER_MODE_NORMAL) != 0) {
+    XftUnlockFace(font);
+    return -1;
+  }
+
+  result = gl_write_glyph_ppm(&face->glyph->bitmap, path);
+  XftUnlockFace(font);
+  return result;
 }
 
 static void gl_warn_vsync_unavailable(void) {
@@ -167,6 +225,7 @@ const RendererOps render_gl_ops = {
     .image_upload = gl_image_upload,
     .image_free = gl_image_free,
     .resources_reset = gl_resources_reset,
+    .debug_glyph_ppm = gl_debug_glyph_ppm,
 };
 
 static int gl_init_fail(const char** reason, const char* message) {

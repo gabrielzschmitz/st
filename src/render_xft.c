@@ -148,4 +148,5 @@ const RendererOps render_xft_ops = {
   .image_upload = 0,
   .image_free = 0,
   .resources_reset = 0,
+  .debug_glyph_ppm = 0,
 };

@@ -93,6 +93,7 @@ static void togglegrdebug(const Arg*);
 static void dumpgrstate(const Arg*);
 static void unloadimages(const Arg*);
 static void toggleimages(const Arg*);
+static void dumpglyphppm(const Arg*);
 
 /* config.h for applying patches and the configuration. */
 #include "config.h"
@@ -362,6 +363,18 @@ void zoomreset(const Arg* arg) {
 }
 
 void ttysend(const Arg* arg) { ttywrite(arg->s, strlen(arg->s), 1); }
+
+static void dumpglyphppm(const Arg* arg) {
+  const RendererOps* ops = renderer_current();
+  const char* path = arg && arg->s ? arg->s : "/tmp/st-glyph.ppm";
+
+  if (!ops || !ops->debug_glyph_ppm) {
+    fputs("st: glyph dump requires the gl renderer\n", stderr);
+    return;
+  }
+  if (ops->debug_glyph_ppm('A', path) != 0)
+    fputs("st: glyph dump failed\n", stderr);
+}
 
 void previewimage(const Arg* arg) {
   Glyph g = getglyphat(mouse_col, mouse_row);
@@ -981,6 +994,8 @@ Visual* xft_visual(void) { return xw.vis; }
 Colormap xft_colormap(void) { return xw.cmap; }
 
 XftDraw* xft_draw_context(void) { return xw.draw; }
+
+XftFont* xft_normal_font(void) { return dc.font.match; }
 
 #ifdef ST_WITH_GL
 int gl_window_width(void) { return win.w; }

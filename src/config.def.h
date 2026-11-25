@@ -297,6 +297,7 @@ static Shortcut shortcuts[] = {
   {MODKEY, XK_k, kscrollup, {.i = -1}},
   {MODKEY, XK_j, kscrolldown, {.i = -1}},
   {TERMMOD, XK_F1, togglegrdebug, {.i = 0}},
+  {TERMMOD, XK_F2, dumpglyphppm, {.s = "/tmp/st-glyph.ppm"}},
   {TERMMOD, XK_F6, dumpgrstate, {.i = 0}},
   {TERMMOD, XK_F7, unloadimages, {.i = 0}},
   {TERMMOD, XK_F8, toggleimages, {.i = 0}},
