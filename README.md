@@ -76,9 +76,10 @@ sudo nixos-rebuild switch --flake .#nixos
 ## Renderer selection
 
 `ST_RENDERER` selects the drawing backend. The default is `xft`. Build with
-`ST_WITH_GL=1` to enable the `gl` value, which creates a GLX context. Drawing
-still uses Xft in that mode. An unknown value prints an error and exits before
-the window opens.
+`ST_WITH_GL=1` to enable the `gl` value. GL mode creates a GLX context, clears
+the window, and swaps buffers. Text primitives still draw to an Xft offscreen
+buffer; GL does not present them yet. An unknown value prints an error and
+exits before the window opens.
 
 ```sh
 ST_RENDERER=xft st

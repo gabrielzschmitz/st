@@ -13,8 +13,13 @@
 
 #include "render.h"
 
-/** GLX renderer implementation. Drawing still delegates to Xft. */
+/** GLX renderer implementation. Primitives still draw to Xft offscreen. */
 extern const RendererOps render_gl_ops;
+
+/** Window geometry and effective background color for GL presentation. */
+int gl_window_width(void);
+int gl_window_height(void);
+RenderColor gl_background_color(void);
 
 /** Create and make current a GLX context for the given window. */
 int gl_init(Display* dpy, Window win, XVisualInfo* vis);

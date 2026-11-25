@@ -836,7 +836,7 @@ void cresize(int width, int height) {
   win.vborderpx = (win.h - row * win.ch) * anysize_valign / 100;
 
   tresize(col, row);
-  xresize(col, row);
+  renderer_current()->resize(col, row);
   ttyresize(win.tw, win.th);
 }
 
@@ -942,6 +942,7 @@ void renderer_select(const char* name) {
 #ifdef ST_WITH_GL
   if (strcmp(name, "gl") == 0) {
     renderer = &render_gl_ops;
+    atexit(renderer_deinit);
     return;
   }
 #endif
@@ -967,6 +968,17 @@ Visual* xft_visual(void) { return xw.vis; }
 Colormap xft_colormap(void) { return xw.cmap; }
 
 XftDraw* xft_draw_context(void) { return xw.draw; }
+
+#ifdef ST_WITH_GL
+int gl_window_width(void) { return win.w; }
+
+int gl_window_height(void) { return win.h; }
+
+RenderColor gl_background_color(void) {
+  return *(const RenderColor*)&dc.col[IS_SET(MODE_REVERSE) ? defaultfg
+                                                           : defaultbg];
+}
+#endif
 
 void xclear(int x1, int y1, int x2, int y2) {
   renderer->clear_rect(x1, y1, x2 - x1, y2 - y1,

@@ -7,6 +7,7 @@
 
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
+#include <GL/gl.h>
 #include <GL/glx.h>
 
 #include "render.h"
@@ -14,14 +15,34 @@
 
 static Display* gl_dpy;
 static GLXContext gl_ctx;
+static Window gl_win;
 
-/* Until GL drawing lands, the GL renderer keeps the existing Xft output. */
-static int gl_frame_begin(void) { return render_xft_ops.frame_begin(); }
+static void gl_viewport(void) {
+  glViewport(0, 0, gl_window_width(), gl_window_height());
+}
 
-static void gl_frame_end(void) { render_xft_ops.frame_end(); }
+static void gl_clear_background(void) {
+  RenderColor bg = gl_background_color();
 
-static void gl_resize(int width, int height) {
-  render_xft_ops.resize(width, height);
+  glClearColor(bg.red / 65535.0f, bg.green / 65535.0f, bg.blue / 65535.0f,
+               bg.alpha / 65535.0f);
+  glClear(GL_COLOR_BUFFER_BIT);
+}
+
+/* Until GL drawing lands, the GL renderer presents only the clear color. */
+static int gl_frame_begin(void) {
+  if (!render_xft_ops.frame_begin()) return 0;
+  gl_clear_background();
+  return 1;
+}
+
+static void gl_frame_end(void) { glXSwapBuffers(gl_dpy, gl_win); }
+
+static void gl_resize(int col, int row) {
+  render_xft_ops.resize(col, row);
+  gl_viewport();
+  gl_clear_background();
+  glXSwapBuffers(gl_dpy, gl_win);
 }
 
 static void gl_clear_rect(int x, int y, int width, int height,
@@ -97,6 +118,7 @@ const RendererOps render_gl_ops = {
 };
 
 int gl_init(Display* dpy, Window win, XVisualInfo* vis) {
+  int attribs[] = {GLX_DOUBLEBUFFER, True, None};
   GLXFBConfig config = NULL;
   GLXFBConfig* configs;
   int nconfigs = 0;
@@ -104,7 +126,7 @@ int gl_init(Display* dpy, Window win, XVisualInfo* vis) {
   if (!dpy || win == None || !vis) return 0;
   if (!glXQueryExtension(dpy, NULL, NULL)) return 0;
 
-  configs = glXChooseFBConfig(dpy, vis->screen, NULL, &nconfigs);
+  configs = glXChooseFBConfig(dpy, vis->screen, attribs, &nconfigs);
   if (!configs) return 0;
 
   for (int i = 0; i < nconfigs; i++) {
@@ -126,13 +148,19 @@ int gl_init(Display* dpy, Window win, XVisualInfo* vis) {
     return 0;
   }
   gl_dpy = dpy;
+  gl_win = win;
+  gl_viewport();
   return 1;
 }
 
 void gl_deinit(void) {
-  if (!gl_dpy) return;
-  glXMakeContextCurrent(gl_dpy, None, None, NULL);
-  if (gl_ctx) glXDestroyContext(gl_dpy, gl_ctx);
-  gl_ctx = NULL;
+  Display* dpy = gl_dpy;
+  GLXContext ctx = gl_ctx;
+
   gl_dpy = NULL;
+  gl_ctx = NULL;
+  gl_win = None;
+  if (!dpy) return;
+  glXMakeContextCurrent(dpy, None, None, NULL);
+  if (ctx) glXDestroyContext(dpy, ctx);
 }
