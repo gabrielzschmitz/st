@@ -934,6 +934,8 @@ int xsetcolorname(int x, const char* name) {
  */
 const RendererOps* renderer_current(void) { return renderer; }
 
+Display* xft_display(void) { return xw.dpy; }
+
 XftDraw* xft_draw_context(void) { return xw.draw; }
 
 void xclear(int x1, int y1, int x2, int y2) {
@@ -1512,52 +1514,6 @@ int xmakeglyphfontspecs(XftGlyphFontSpec* specs, const Glyph* glyphs, int len,
   return numspecs;
 }
 
-/* Draws a horizontal dashed line of length `w` starting at `(x, y)`. `wavelen`
- * is the length of the dash plus the length of the gap. `fraction` is the
- * fraction of the dash length compared to `wavelen`. */
-static void xdrawunderdashed(Draw draw, Color* color, int x, int y, int w,
-                             int wavelen, float fraction, int thick) {
-  int dashw = MAX(1, fraction * wavelen);
-  for (int i = x - x % wavelen; i < x + w; i += wavelen) {
-    int startx = MAX(i, x);
-    int endx = MIN(i + dashw, x + w);
-    if (startx < endx)
-      XftDrawRect(xw.draw, color, startx, y, endx - startx, thick);
-  }
-}
-
-/* Draws an undercurl. `h` is the total height, including line thickness. */
-static void xdrawundercurl(Draw draw, Color* color, int x, int y, int w, int h,
-                           int thick) {
-  XGCValues gcvals = {.foreground = color->pixel,
-                      .line_width = thick,
-                      .line_style = LineSolid,
-                      .cap_style = CapRound};
-  GC gc =
-    XCreateGC(xw.dpy, XftDrawDrawable(xw.draw),
-              GCForeground | GCLineWidth | GCLineStyle | GCCapStyle, &gcvals);
-
-  XRectangle clip = {.x = x, .y = y, .width = w, .height = h};
-  XSetClipRectangles(xw.dpy, gc, 0, 0, &clip, 1, Unsorted);
-
-  int yoffset = thick / 2;
-  int segh = MAX(1, h - thick);
-  /* Make sure every segment is at a 45 degree angle, otherwise it doesn't
-   * look good without antialiasing. */
-  int segw = segh;
-  int wavelen = MAX(1, segw * 2);
-
-  for (int i = x - (x % wavelen); i < x + w; i += wavelen) {
-    XPoint points[3] = {{.x = i, .y = y + yoffset},
-                        {.x = i + segw, .y = y + yoffset + segh},
-                        {.x = i + wavelen, .y = y + yoffset}};
-    XDrawLines(xw.dpy, XftDrawDrawable(xw.draw), gc, points, 3,
-               CoordModeOrigin);
-  }
-
-  XFreeGC(xw.dpy, gc);
-}
-
 void xdrawglyphfontspecs(const XftGlyphFontSpec* specs, Glyph base, int len,
                          int x, int y, int charlen, int dmode) {
   int winx = win.hborderpx + x * win.cw, winy = win.vborderpx + y * win.ch,
@@ -1691,10 +1647,6 @@ void xdrawglyphfontspecs(const XftGlyphFontSpec* specs, Glyph base, int len,
   int thick = MAX(1, roundf(fthick));
   /* The default gap between the baseline and a single underline. */
   int gap = roundf(fthick * 2);
-  /* The total thickness of a double underline. */
-  int doubleh = thick * 2 + ceilf(fthick * 0.5);
-  /* The total thickness of an undercurl. */
-  int curlh = thick * 2 + roundf(fthick * 0.75);
 
   /* Render the underline before the glyphs. */
   if (base.mode & ATTR_UNDERLINE) {
@@ -1702,23 +1654,8 @@ void xdrawglyphfontspecs(const XftGlyphFontSpec* specs, Glyph base, int len,
     int liney = winy + dc.font.ascent + gap;
     /* Adjust liney to guarantee that a single underline fits. */
     liney -= MAX(0, liney + thick - (winy + win.ch));
-    if (style == UNDERLINE_DOUBLE) {
-      liney -= MAX(0, liney + doubleh - (winy + win.ch));
-      XftDrawRect(xw.draw, &decor, winx, liney, width, thick);
-      XftDrawRect(xw.draw, &decor, winx, liney + doubleh - thick, width, thick);
-    } else if (style == UNDERLINE_DOTTED) {
-      xdrawunderdashed(xw.draw, &decor, winx, liney, width, thick * 2, 0.5,
-                       thick);
-    } else if (style == UNDERLINE_DASHED) {
-      int wavelen = MAX(2, win.cw * 0.9);
-      xdrawunderdashed(xw.draw, &decor, winx, liney, width, wavelen, 0.65,
-                       thick);
-    } else if (style == UNDERLINE_CURLY) {
-      liney -= MAX(0, liney + curlh - (winy + win.ch));
-      xdrawundercurl(xw.draw, &decor, winx, liney, width, curlh, thick);
-    } else {
-      XftDrawRect(xw.draw, &decor, winx, liney, width, thick);
-    }
+    renderer->draw_underline((const RenderColor*)&decor, winx, liney, width,
+                             style, thick, fthick, win.cw, winy + win.ch);
   }
 
   /* Reset clip to none. */
@@ -1733,7 +1670,8 @@ void xdrawglyphfontspecs(const XftGlyphFontSpec* specs, Glyph base, int len,
 
   /* Render strikethrough. Alway use the fg color. */
   if (base.mode & ATTR_STRUCK) {
-    XftDrawRect(xw.draw, fg, winx, winy + 2 * dc.font.ascent / 3, width, thick);
+    renderer->draw_strike((const RenderColor*)fg, winx,
+                          winy + 2 * dc.font.ascent / 3, width, thick);
   }
 }
 

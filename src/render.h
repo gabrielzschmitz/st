@@ -18,8 +18,8 @@ typedef struct RenderColor {
 typedef struct RendererOps RendererOps;
 
 /**
- * Backend drawing operations. Implementations own the pixel-level work while
- * st.c and x.c keep terminal state, layout, and geometry decisions.
+ * Backend drawing operations. Implementations own pixel-level work while
+ * st.c and x.c keep terminal state and cell layout decisions.
  */
 struct RendererOps {
   const char* name;
@@ -38,7 +38,7 @@ struct RendererOps {
                       Line line, int len);
   void (*draw_underline)(const RenderColor* color, int x, int y, int width,
                          uint32_t style, int thick, float fthick,
-                         int cell_width, int cell_height);
+                         int cell_width, int cell_bottom);
   void (*draw_strike)(const RenderColor* color, int x, int y, int width,
                       int thick);
 
