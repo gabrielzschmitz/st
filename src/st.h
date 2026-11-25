@@ -5,6 +5,9 @@
 
 /* See LICENSE for license details. */
 
+#ifndef ST_ST_H
+#define ST_ST_H
+
 #include <stdint.h>
 #include <sys/types.h>
 
@@ -232,3 +235,5 @@ static inline uint32_t tgetimgplacementid(Glyph* g) {
 static inline void tsetimgplacementid(Glyph* g, uint32_t id) {
   g->decor = (id & 0xFFFFFF) | (1 << 24);
 }
+
+#endif

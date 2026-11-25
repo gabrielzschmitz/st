@@ -19,8 +19,8 @@ config.h:
 .c.o:
 	$(CC) $(STCFLAGS) -c $<
 
-st.o: config.h st.h win.h graphics.h trace.h
-x.o: arg.h config.h st.h win.h graphics.h hb.h trace.h
+st.o: config.h st.h win.h graphics.h trace.h render.h
+x.o: arg.h config.h st.h win.h graphics.h hb.h trace.h render.h
 graphics.c: graphics.h khash.h kvec.h st.h
 boxdraw.o: config.h st.h boxdraw_data.h
 hb.o: st.h

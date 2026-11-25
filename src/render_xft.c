@@ -5,15 +5,24 @@
 
 /* See LICENSE for license details. */
 
+#include <X11/Xft/Xft.h>
+
 #include "render.h"
 #include "win.h"
+
+extern XftDraw* xft_draw_context(void);
+
+static void xft_clear_rect(int x, int y, int width, int height,
+                           const RenderColor* color) {
+  XftDrawRect(xft_draw_context(), (XftColor*)color, x, y, width, height);
+}
 
 const RendererOps render_xft_ops = {
   .name = "xft",
   .frame_begin = xstartdraw,
   .frame_end = xfinishdraw,
   .resize = xresize,
-  .clear_rect = 0,
+  .clear_rect = xft_clear_rect,
   .draw_line = xdrawline,
   .draw_cursor = xdrawcursor,
   .draw_underline = 0,

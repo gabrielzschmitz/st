@@ -33,6 +33,7 @@ char *argv0;
 #include "graphics.h"
 #include "hb.h"
 #include "trace.h"
+#include "render.h"
 // clang-format on
 
 #ifndef ICONPATH
@@ -265,6 +266,7 @@ static DC dc;
 static XWindow xw;
 static XSelection xsel;
 static TermWindow win;
+static const RendererOps* renderer = &render_xft_ops;
 const char XdndVersion = 5;
 static unsigned int mouse_col = 0, mouse_row = 0;
 
@@ -930,9 +932,15 @@ int xsetcolorname(int x, const char* name) {
 /*
  * Absolute coordinates.
  */
+const RendererOps* renderer_current(void) { return renderer; }
+
+XftDraw* xft_draw_context(void) { return xw.draw; }
+
 void xclear(int x1, int y1, int x2, int y2) {
-  XftDrawRect(xw.draw, &dc.col[IS_SET(MODE_REVERSE) ? defaultfg : defaultbg],
-              x1, y1, x2 - x1, y2 - y1);
+  renderer->clear_rect(x1, y1, x2 - x1, y2 - y1,
+                       (const RenderColor*)&dc.col[IS_SET(MODE_REVERSE)
+                                                       ? defaultfg
+                                                       : defaultbg]);
 }
 
 void xhints(void) {
@@ -1648,7 +1656,7 @@ void xdrawglyphfontspecs(const XftGlyphFontSpec* specs, Glyph base, int len,
       xclear(winx, winy + win.ch, winx + width, win.h);
 
     /* Clean up the region we want to draw to. */
-    XftDrawRect(xw.draw, bg, winx, winy, width, win.ch);
+    renderer->clear_rect(winx, winy, width, win.ch, (const RenderColor*)bg);
   }
 
   if (!(dmode & DRAW_FG)) return;

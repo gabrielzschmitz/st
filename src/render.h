@@ -8,9 +8,12 @@
 #ifndef ST_RENDER_H
 #define ST_RENDER_H
 
-#include <X11/Xft/Xft.h>
-
 #include "st.h"
+
+typedef struct RenderColor {
+  unsigned short red, green, blue, alpha;
+  unsigned long pixel;
+} RenderColor;
 
 typedef struct RendererOps RendererOps;
 
@@ -26,17 +29,17 @@ struct RendererOps {
   void (*frame_end)(void);
   void (*resize)(int width, int height);
 
-  /* Primitives. Colors use the Xft representation until a later step makes
-   * them backend-neutral. */
+  /* Primitives. RenderColor mirrors XftColor's storage so backends can read
+   * channels without exposing a particular drawing library. */
   void (*clear_rect)(int x, int y, int width, int height,
-                     const XftColor* color);
+                     const RenderColor* color);
   void (*draw_line)(Line line, int x1, int y1, int x2);
   void (*draw_cursor)(int cx, int cy, Glyph g, int ox, int oy, Glyph og,
                       Line line, int len);
-  void (*draw_underline)(const XftColor* color, int x, int y, int width,
+  void (*draw_underline)(const RenderColor* color, int x, int y, int width,
                          uint32_t style, int thick, float fthick,
                          int cell_width, int cell_height);
-  void (*draw_strike)(const XftColor* color, int x, int y, int width,
+  void (*draw_strike)(const RenderColor* color, int x, int y, int width,
                       int thick);
 
   /* Kitty image drawing. */

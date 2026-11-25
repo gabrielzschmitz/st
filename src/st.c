@@ -28,6 +28,7 @@
 #include "win.h"
 #include "graphics.h"
 #include "trace.h"
+#include "render.h"
 // clang-format on
 
 #if defined(__linux)
@@ -2774,19 +2775,19 @@ void drawregion(int x1, int y1, int x2, int y2) {
   int y, L;
   uint64_t cells = 0;
 
-  xstartimagedraw(term.dirty, term.row);
+  renderer_current()->images_begin(term.dirty, term.row);
 
   L = TLINEOFFSET(y1);
   for (y = y1; y < y2; y++) {
     if (term.dirty[y]) {
       term.dirty[y] = 0;
       cells += (uint64_t)(x2 - x1);
-      xdrawline(TSCREEN.buffer[L], x1, y, x2);
+      renderer_current()->draw_line(TSCREEN.buffer[L], x1, y, x2);
     }
     L = (L + 1) % TSCREEN.size;
   }
 
-  xfinishimagedraw();
+  renderer_current()->images_end();
   trace_frame_end(cells);
 }
 
@@ -2794,7 +2795,7 @@ void draw(void) {
   int cx = term.c.x, ocx = term.ocx, ocy = term.ocy;
 
   trace_frame_begin();
-  if (!xstartdraw()) {
+  if (!renderer_current()->frame_begin()) {
     trace_frame_cancel();
     return;
   }
@@ -2811,7 +2812,7 @@ void draw(void) {
                 TLINE(term.ocy)[term.ocx], TLINE(term.ocy), term.col);
   term.ocx = cx;
   term.ocy = term.c.y;
-  xfinishdraw();
+  renderer_current()->frame_end();
   if (ocx != term.ocx || ocy != term.ocy) xximspot(term.ocx, term.ocy);
 }
 
