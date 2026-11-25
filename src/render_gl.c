@@ -405,6 +405,9 @@ static void gl_draw_glyphs(const RenderGlyphSpec* specs, int len,
     entry = gl_atlas_get((XftFont*)specs[i].font, specs[i].glyph);
     if (!entry || entry->width <= 0 || entry->height <= 0) continue;
 
+    /* xmakeglyphfontspecs resolves ATTR_WIDE advances and HarfBuzz combining
+     * offsets into spec.x/y. Use those values directly so GL placement matches
+     * Xft for wide cells and combining marks. */
     x0 = specs[i].x + entry->left;
     y0 = specs[i].y - entry->top;
     x1 = x0 + entry->width;
