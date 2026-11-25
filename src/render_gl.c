@@ -147,6 +147,8 @@ static int gl_font_pixel_size(XftFont* font) {
 }
 
 static int gl_font_style(XftFont* font) {
+  /* Bold and italic XftFont variants have distinct face pointers, but keeping
+   * pattern style in the key also covers reused faces with changed settings. */
   int slant = FC_SLANT_ROMAN;
   int weight = FC_WEIGHT_NORMAL;
 
