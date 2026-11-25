@@ -12,6 +12,9 @@
   libXext,
   libXrender,
   libXft,
+  libglvnd,
+  libGL,
+  withGL ? false,
 }:
 
 stdenv.mkDerivation {
@@ -27,6 +30,9 @@ stdenv.mkDerivation {
 
   makeFlags = [
     "ICONPATH=${placeholder "out"}/share/icons/hicolor/256x256/apps/st.png"
+  ]
+  ++ lib.optionals withGL [
+    "ST_WITH_GL=1"
   ];
 
   buildInputs = [
@@ -39,6 +45,10 @@ stdenv.mkDerivation {
     libXext
     libXrender
     libXft
+  ]
+  ++ lib.optionals withGL [
+    libglvnd
+    libGL
   ];
 
   installPhase = ''

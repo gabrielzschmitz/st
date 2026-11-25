@@ -1,5 +1,6 @@
 {
   pkgs ? import <nixpkgs> { },
+  withGL ? false,
 }:
 
 pkgs.mkShell {
@@ -16,16 +17,22 @@ pkgs.mkShell {
     xorg-server
   ];
 
-  buildInputs = with pkgs; [
-    fontconfig
-    freetype
-    harfbuzz
-    imlib2
-    libX11
-    libXcursor
-    libXext
-    libXrender
-    libXft
-    ncurses
-  ];
+  buildInputs =
+    with pkgs;
+    [
+      fontconfig
+      freetype
+      harfbuzz
+      imlib2
+      libX11
+      libXcursor
+      libXext
+      libXrender
+      libXft
+      ncurses
+    ]
+    ++ lib.optionals withGL [
+      libglvnd
+      libGL
+    ];
 }
