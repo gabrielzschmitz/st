@@ -89,6 +89,13 @@ typedef struct RenderColor {
   unsigned short red, green, blue, alpha;
 } RenderColor;
 
+/* Backend-neutral glyph placement. XftGlyphFontSpec has the same layout. */
+typedef struct RenderGlyphSpec {
+  void* font;
+  unsigned int glyph;
+  short x, y;
+} RenderGlyphSpec;
+
 typedef uint_least32_t Rune;
 
 #define Glyph Glyph_
@@ -154,11 +161,8 @@ ushort boxdrawindex(const Glyph*);
 typedef void (*BoxdrawFillRect)(const RenderColor*, int, int, int, int);
 void boxdraw_set_fill_rect(BoxdrawFillRect);
 
-#ifdef XFT_VERSION
-/* only exposed to x.c, otherwise we'll need Xft.h for the type */
 void drawboxes(int, int, int, int, const RenderColor*, const RenderColor*,
-               const XftGlyphFontSpec*, int);
-#endif
+               const RenderGlyphSpec*, int);
 
 /* config.h globals */
 extern char* utmp;

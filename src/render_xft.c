@@ -25,6 +25,18 @@ _Static_assert(offsetof(RenderColor, blue) == offsetof(XftColor, color.blue),
                "RenderColor blue must match XftColor");
 _Static_assert(offsetof(RenderColor, alpha) == offsetof(XftColor, color.alpha),
                "RenderColor alpha must match XftColor");
+_Static_assert(sizeof(RenderGlyphSpec) == sizeof(XftGlyphFontSpec),
+               "RenderGlyphSpec must match XftGlyphFontSpec size");
+_Static_assert(offsetof(RenderGlyphSpec, font) ==
+                 offsetof(XftGlyphFontSpec, font),
+               "RenderGlyphSpec font must match XftGlyphFontSpec");
+_Static_assert(offsetof(RenderGlyphSpec, glyph) ==
+                 offsetof(XftGlyphFontSpec, glyph),
+               "RenderGlyphSpec glyph must match XftGlyphFontSpec");
+_Static_assert(offsetof(RenderGlyphSpec, x) == offsetof(XftGlyphFontSpec, x),
+               "RenderGlyphSpec x must match XftGlyphFontSpec");
+_Static_assert(offsetof(RenderGlyphSpec, y) == offsetof(XftGlyphFontSpec, y),
+               "RenderGlyphSpec y must match XftGlyphFontSpec");
 
 extern Display* xft_display(void);
 extern Visual* xft_visual(void);

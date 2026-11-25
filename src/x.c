@@ -110,7 +110,7 @@ static void dumpglyphppm(const Arg*);
 
 typedef XftDraw* Draw;
 typedef XftColor Color;
-typedef XftGlyphFontSpec GlyphFontSpec;
+typedef RenderGlyphSpec GlyphFontSpec;
 
 /* Purely graphic info */
 typedef struct {
@@ -185,8 +185,8 @@ typedef struct {
 
 static inline ushort sixd_to_16bit(int);
 static void xresetfontsettings(ushort mode, Font** font, int* frcflags);
-static int xmakeglyphfontspecs(XftGlyphFontSpec*, const Glyph*, int, int, int);
-static void xdrawglyphfontspecs(const XftGlyphFontSpec*, Glyph, int, int, int,
+static int xmakeglyphfontspecs(RenderGlyphSpec*, const Glyph*, int, int, int);
+static void xdrawglyphfontspecs(const RenderGlyphSpec*, Glyph, int, int, int,
                                 int, int);
 static void xdrawglyph(Glyph, int, int);
 static void xclear(int, int, int, int);
@@ -1437,7 +1437,7 @@ void xresetfontsettings(ushort mode, Font** font, int* frcflags) {
   }
 }
 
-int xmakeglyphfontspecs(XftGlyphFontSpec* specs, const Glyph* glyphs, int len,
+int xmakeglyphfontspecs(RenderGlyphSpec* specs, const Glyph* glyphs, int len,
                         int x, int y) {
   float winx = win.hborderpx + x * win.cw, winy = win.vborderpx + y * win.ch,
         xp, yp;
@@ -1602,7 +1602,7 @@ int xmakeglyphfontspecs(XftGlyphFontSpec* specs, const Glyph* glyphs, int len,
   return numspecs;
 }
 
-void xdrawglyphfontspecs(const XftGlyphFontSpec* specs, Glyph base, int len,
+void xdrawglyphfontspecs(const RenderGlyphSpec* specs, Glyph base, int len,
                          int x, int y, int charlen, int dmode) {
   int winx = win.hborderpx + x * win.cw, winy = win.vborderpx + y * win.ch,
       width = charlen * win.cw;
@@ -1754,7 +1754,7 @@ void xdrawglyphfontspecs(const XftGlyphFontSpec* specs, Glyph base, int len,
               (const RenderColor*)bg, specs, len);
   } else {
     /* Render the glyphs. */
-    XftDrawGlyphFontSpec(xw.draw, fg, specs, len);
+    XftDrawGlyphFontSpec(xw.draw, fg, (const XftGlyphFontSpec*)specs, len);
   }
 
   /* Render strikethrough. Alway use the fg color. */
@@ -1766,7 +1766,7 @@ void xdrawglyphfontspecs(const XftGlyphFontSpec* specs, Glyph base, int len,
 
 void xdrawglyph(Glyph g, int x, int y) {
   int numspecs;
-  XftGlyphFontSpec* specs = xw.specbuf;
+  RenderGlyphSpec* specs = xw.specbuf;
 
   numspecs = xmakeglyphfontspecs(specs, &g, 1, x, y);
   xdrawglyphfontspecs(specs, g, numspecs, x, y, (g.mode & ATTR_WIDE) ? 2 : 1,
@@ -2072,7 +2072,7 @@ int xstartdraw(void) { return IS_SET(MODE_VISIBLE); }
 void xdrawline(Line line, int x1, int y1, int x2) {
   int i, x, ox, numspecs;
   Glyph base, new;
-  XftGlyphFontSpec* specs;
+  RenderGlyphSpec* specs;
 
   /* Draw line in 2 passes: background and foreground. This way wide
    * glyphs won't get truncated (#223) */

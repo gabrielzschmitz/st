@@ -42,7 +42,7 @@ ushort boxdrawindex(const Glyph* g) {
 }
 
 void drawboxes(int x, int y, int cw, int ch, const RenderColor* fg,
-               const RenderColor* bg, const XftGlyphFontSpec* specs, int len) {
+               const RenderColor* bg, const RenderGlyphSpec* specs, int len) {
   for (; len-- > 0; x += cw, specs++)
     drawbox(x, y, cw, ch, fg, bg, (ushort)specs->glyph);
 }
