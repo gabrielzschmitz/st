@@ -1822,16 +1822,19 @@ void xdrawcursor(int cx, int cy, Glyph g, int ox, int oy, Glyph og, Line line,
         if (IS_SET(MODE_BLINK)) break;
         /* FALLTHROUGH */
       case 4: /* steady underline */
-        XftDrawRect(xw.draw, &drawcol, win.hborderpx + cx * win.cw,
-                    win.vborderpx + (cy + 1) * win.ch - cursorthickness, win.cw,
-                    cursorthickness);
+        renderer->clear_rect(win.hborderpx + cx * win.cw,
+                             win.vborderpx + (cy + 1) * win.ch -
+                               cursorthickness,
+                             win.cw, cursorthickness,
+                             (const RenderColor*)&drawcol);
         break;
       case 5: /* blinking bar */
         if (IS_SET(MODE_BLINK)) break;
         /* FALLTHROUGH */
       case 6: /* steady bar */
-        XftDrawRect(xw.draw, &drawcol, win.hborderpx + cx * win.cw,
-                    win.vborderpx + cy * win.ch, cursorthickness, win.ch);
+        renderer->clear_rect(win.hborderpx + cx * win.cw,
+                             win.vborderpx + cy * win.ch, cursorthickness,
+                             win.ch, (const RenderColor*)&drawcol);
         break;
       case 7: /* blinking st cursor */
         if (IS_SET(MODE_BLINK)) break;
