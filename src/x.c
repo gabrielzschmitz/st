@@ -1200,6 +1200,8 @@ void xunloadfont(Font* f) {
 }
 
 void xunloadfonts(void) {
+  if (renderer && renderer->resources_reset) renderer->resources_reset();
+
   /* Clear Harfbuzz font cache. */
   hbunloadfonts();
 

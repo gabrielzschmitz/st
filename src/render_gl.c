@@ -9,6 +9,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <fontconfig/fontconfig.h>
+
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/Xft/Xft.h>
@@ -23,6 +25,28 @@
 
 extern Display* xft_display(void);
 extern XftFont* xft_normal_font(void);
+
+#define GL_ATLAS_SIZE 512
+#define GL_ATLAS_PADDING 1
+#define GL_ATLAS_ENTRIES 4096
+
+typedef struct {
+  int valid;
+  XftFont* font;
+  unsigned int glyph;
+  int pixel_size;
+  int style;
+  int x, y;
+  int width, height;
+  int left, top;
+} GlGlyphEntry;
+
+static GLuint gl_atlas_texture;
+static GlGlyphEntry gl_atlas_entries[GL_ATLAS_ENTRIES];
+static int gl_atlas_x = GL_ATLAS_PADDING;
+static int gl_atlas_y = GL_ATLAS_PADDING;
+static int gl_atlas_row_height;
+static int gl_atlas_ready;
 
 typedef void (*gl_swap_interval_ext_fn)(Display*, GLXDrawable, int);
 typedef void (*gl_query_drawable_ext_fn)(Display*, GLXDrawable, int,
@@ -43,6 +67,171 @@ static void gl_clear_background(void) {
   glClearColor(bg.red / 65535.0f, bg.green / 65535.0f, bg.blue / 65535.0f,
                bg.alpha / 65535.0f);
   glClear(GL_COLOR_BUFFER_BIT);
+}
+
+static int gl_prepare_glyph(FT_Face face, unsigned int glyph) {
+  if (FT_Load_Glyph(face, (FT_UInt)glyph, FT_LOAD_DEFAULT) != 0) return -1;
+  if (FT_Render_Glyph(face->glyph, FT_RENDER_MODE_NORMAL) != 0) return -1;
+  return 0;
+}
+
+static void gl_atlas_reset(void) {
+  memset(gl_atlas_entries, 0, sizeof(gl_atlas_entries));
+  gl_atlas_x = GL_ATLAS_PADDING;
+  gl_atlas_y = GL_ATLAS_PADDING;
+  gl_atlas_row_height = 0;
+}
+
+static void gl_atlas_destroy(void) {
+  if (gl_atlas_texture) glDeleteTextures(1, &gl_atlas_texture);
+  gl_atlas_texture = 0;
+  gl_atlas_ready = 0;
+  memset(gl_atlas_entries, 0, sizeof(gl_atlas_entries));
+  gl_atlas_x = GL_ATLAS_PADDING;
+  gl_atlas_y = GL_ATLAS_PADDING;
+  gl_atlas_row_height = 0;
+}
+
+static int gl_font_pixel_size(XftFont* font) {
+  double size;
+
+  if (!font->pattern) return 0;
+  if (FcPatternGetDouble(font->pattern, FC_PIXEL_SIZE, 0, &size) ==
+      FcResultMatch)
+    return (int)size;
+  if (FcPatternGetDouble(font->pattern, FC_SIZE, 0, &size) == FcResultMatch)
+    return (int)size;
+  return 0;
+}
+
+static int gl_font_style(XftFont* font) {
+  int slant = FC_SLANT_ROMAN;
+  int weight = FC_WEIGHT_NORMAL;
+
+  if (!font->pattern) return 0;
+  FcPatternGetInteger(font->pattern, FC_SLANT, 0, &slant);
+  FcPatternGetInteger(font->pattern, FC_WEIGHT, 0, &weight);
+  return (slant << 16) | (weight & 0xffff);
+}
+
+static int gl_atlas_create(void) {
+  gl_atlas_destroy();
+  glGenTextures(1, &gl_atlas_texture);
+  glBindTexture(GL_TEXTURE_2D, gl_atlas_texture);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, GL_ATLAS_SIZE, GL_ATLAS_SIZE, 0,
+               GL_RED, GL_UNSIGNED_BYTE, NULL);
+  if (glGetError() != GL_NO_ERROR) {
+    gl_atlas_destroy();
+    return -1;
+  }
+
+  gl_atlas_reset();
+  gl_atlas_ready = 1;
+  return 0;
+}
+
+static int gl_atlas_upload(GlGlyphEntry* entry, const FT_Bitmap* bitmap) {
+  size_t pitch =
+    (size_t)(bitmap->pitch < 0 ? -bitmap->pitch : bitmap->pitch);
+  unsigned int row;
+
+  glBindTexture(GL_TEXTURE_2D, gl_atlas_texture);
+  for (row = 0; row < bitmap->rows; row++) {
+    const unsigned char* src;
+    if (bitmap->pitch < 0)
+      src = bitmap->buffer + (bitmap->rows - 1 - row) * pitch;
+    else
+      src = bitmap->buffer + row * pitch;
+    glTexSubImage2D(GL_TEXTURE_2D, 0, entry->x, entry->y + row, entry->width,
+                    1, GL_RED, GL_UNSIGNED_BYTE, src);
+  }
+
+  return glGetError() == GL_NO_ERROR ? 0 : -1;
+}
+
+static GlGlyphEntry* gl_atlas_get(XftFont* font, unsigned int glyph) {
+  GlGlyphEntry* entry = NULL;
+  FT_Face face;
+  FT_Bitmap* bitmap;
+  int pixel_size, style, consumed_w, consumed_h;
+  int i;
+
+  if (!gl_atlas_ready || !font) return NULL;
+  pixel_size = gl_font_pixel_size(font);
+  style = gl_font_style(font);
+
+  for (i = 0; i < GL_ATLAS_ENTRIES; i++) {
+    GlGlyphEntry* candidate = &gl_atlas_entries[i];
+    if (candidate->valid && candidate->font == font &&
+        candidate->glyph == glyph && candidate->pixel_size == pixel_size &&
+        candidate->style == style)
+      return candidate;
+    if (!candidate->valid && !entry) entry = candidate;
+  }
+  if (!entry) {
+    gl_atlas_reset();
+    entry = &gl_atlas_entries[0];
+  }
+
+  face = XftLockFace(font);
+  if (!face) return NULL;
+  if (gl_prepare_glyph(face, glyph) != 0) {
+    XftUnlockFace(font);
+    return NULL;
+  }
+
+  bitmap = &face->glyph->bitmap;
+  consumed_w = (int)bitmap->width + 2 * GL_ATLAS_PADDING;
+  consumed_h = (int)bitmap->rows + 2 * GL_ATLAS_PADDING;
+  if (consumed_w > GL_ATLAS_SIZE || consumed_h > GL_ATLAS_SIZE) {
+    XftUnlockFace(font);
+    return NULL;
+  }
+
+  if (gl_atlas_y + consumed_h > GL_ATLAS_SIZE) {
+    gl_atlas_reset();
+    entry = &gl_atlas_entries[0];
+  }
+  if (gl_atlas_x + consumed_w > GL_ATLAS_SIZE) {
+    gl_atlas_x = GL_ATLAS_PADDING;
+    gl_atlas_y += gl_atlas_row_height + GL_ATLAS_PADDING;
+    gl_atlas_row_height = 0;
+  }
+  if (gl_atlas_y + consumed_h > GL_ATLAS_SIZE) {
+    gl_atlas_reset();
+    entry = &gl_atlas_entries[0];
+  }
+
+  memset(entry, 0, sizeof(*entry));
+  entry->font = font;
+  entry->glyph = glyph;
+  entry->pixel_size = pixel_size;
+  entry->style = style;
+  entry->x = gl_atlas_x + GL_ATLAS_PADDING;
+  entry->y = gl_atlas_y + GL_ATLAS_PADDING;
+  entry->width = (int)bitmap->width;
+  entry->height = (int)bitmap->rows;
+  entry->left = face->glyph->bitmap_left;
+  entry->top = face->glyph->bitmap_top;
+
+  if (gl_atlas_upload(entry, bitmap) != 0) {
+    memset(entry, 0, sizeof(*entry));
+    gl_atlas_ready = 0;
+    XftUnlockFace(font);
+    fputs("st: glyph atlas upload failed\n", stderr);
+    return NULL;
+  }
+
+  entry->valid = 1;
+  gl_atlas_x += consumed_w;
+  gl_atlas_row_height = MAX(gl_atlas_row_height, consumed_h);
+  XftUnlockFace(font);
+  return entry;
 }
 
 static int gl_write_glyph_ppm(const FT_Bitmap* bitmap, const char* path) {
@@ -86,8 +275,7 @@ static int gl_debug_glyph_ppm(uint32_t codepoint, const char* path) {
 
   face = XftLockFace(font);
   if (!face) return -1;
-  if (FT_Load_Glyph(face, glyph, FT_LOAD_DEFAULT) != 0 ||
-      FT_Render_Glyph(face->glyph, FT_RENDER_MODE_NORMAL) != 0) {
+  if (gl_prepare_glyph(face, glyph) != 0) {
     XftUnlockFace(font);
     return -1;
   }
@@ -206,7 +394,7 @@ static int gl_image_upload(uint32_t image_id, int width, int height,
 
 static void gl_image_free(uint32_t image_id) { (void)image_id; }
 
-static void gl_resources_reset(void) {}
+static void gl_resources_reset(void) { gl_atlas_reset(); }
 
 const RendererOps render_gl_ops = {
     .name = "gl",
@@ -270,6 +458,8 @@ int gl_init(Display* dpy, Window win, XVisualInfo* vis, const char** reason) {
   gl_dpy = dpy;
   gl_win = win;
   gl_viewport();
+  if (gl_atlas_create() != 0)
+    fputs("st: glyph atlas allocation failed\n", stderr);
   gl_setup_vsync(dpy, win, vis->screen);
   return 1;
 }
@@ -278,6 +468,7 @@ void gl_deinit(void) {
   Display* dpy = gl_dpy;
   GLXContext ctx = gl_ctx;
 
+  gl_atlas_destroy();
   gl_dpy = NULL;
   gl_ctx = NULL;
   gl_win = None;
