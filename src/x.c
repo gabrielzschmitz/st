@@ -1689,7 +1689,7 @@ void xdrawglyph(Glyph g, int x, int y) {
                       DRAW_BG | DRAW_FG);
   if (g.mode & ATTR_IMAGE) {
     gr_start_drawing(xw.buf, win.cw, win.ch);
-    xdrawoneimagecell(g, x, y);
+    renderer->draw_image_cell(g, x, y);
     gr_finish_drawing(xw.buf);
   }
 }
@@ -1705,7 +1705,7 @@ void xdrawcursor(int cx, int cy, Glyph g, int ox, int oy, Glyph og, Line line,
   /* Redraw the line where cursor was previously.
    * It will restore the ligatures broken by the cursor. */
   gr_start_drawing(xw.buf, win.cw, win.ch);
-  xdrawline(line, 0, oy, len);
+  renderer->draw_line(line, 0, oy, len);
   gr_finish_drawing(xw.buf);
 
   if (IS_SET(MODE_HIDE)) return;
@@ -2003,7 +2003,7 @@ void xdrawline(Line line, int x1, int y1, int x2) {
         numspecs = xmakeglyphfontspecs(specs, &line[ox], x - ox, ox, y1);
         xdrawglyphfontspecs(specs, base, numspecs, ox, y1, x - ox, dmode);
         if (base.mode & ATTR_IMAGE && dmode == DRAW_FG)
-          xdrawimages(base, line, ox, y1, x);
+          renderer->draw_images(base, line, ox, y1, x);
         i = 0;
       }
       if (i == 0) {
@@ -2017,7 +2017,7 @@ void xdrawline(Line line, int x1, int y1, int x2) {
       xdrawglyphfontspecs(specs, base, numspecs, ox, y1, x2 - ox, dmode);
     }
     if (i > 0 && base.mode & ATTR_IMAGE && dmode == DRAW_FG)
-      xdrawimages(base, line, ox, y1, x);
+      renderer->draw_images(base, line, ox, y1, x);
   }
 }
 
