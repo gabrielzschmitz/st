@@ -10,11 +10,6 @@
 
 #include "st.h"
 
-typedef struct RenderColor {
-  unsigned long pixel;
-  unsigned short red, green, blue, alpha;
-} RenderColor;
-
 typedef struct RendererOps RendererOps;
 
 /**
@@ -57,6 +52,9 @@ struct RendererOps {
 
 /** Xft renderer implementation. */
 extern const RendererOps render_xft_ops;
+
+/** Install Xft callbacks used outside the RendererOps table. */
+void render_xft_init(void);
 
 /** Return the active renderer. */
 const RendererOps* renderer_current(void);

@@ -27,12 +27,32 @@ _Static_assert(offsetof(RenderColor, alpha) == offsetof(XftColor, color.alpha),
                "RenderColor alpha must match XftColor");
 
 extern Display* xft_display(void);
+extern Visual* xft_visual(void);
+extern Colormap xft_colormap(void);
 extern XftDraw* xft_draw_context(void);
 
 static void xft_clear_rect(int x, int y, int width, int height,
                            const RenderColor* color) {
   XftDrawRect(xft_draw_context(), (XftColor*)color, x, y, width, height);
 }
+
+static void xft_boxdraw_fill(const RenderColor* color, int x, int y,
+                             int width, int height) {
+  Display* dpy = xft_display();
+  Visual* vis = xft_visual();
+  Colormap cmap = xft_colormap();
+  XRenderColor xrc = {.red = color->red,
+                      .green = color->green,
+                      .blue = color->blue,
+                      .alpha = color->alpha};
+  XftColor xfc;
+
+  XftColorAllocValue(dpy, vis, cmap, &xrc, &xfc);
+  xft_clear_rect(x, y, width, height, (const RenderColor*)&xfc);
+  XftColorFree(dpy, vis, cmap, &xfc);
+}
+
+void render_xft_init(void) { boxdraw_set_fill_rect(xft_boxdraw_fill); }
 
 /* Draws a horizontal dashed line of length `w` starting at `(x, y)`. `wavelen`
  * is the length of the dash plus the length of the gap. `fraction` is the

@@ -17,21 +17,15 @@
 /* Rounded non-negative integers division of n / d  */
 #define DIV(n, d) (((n) + (d) / 2) / (d))
 
-static Display* xdpy;
-static Colormap xcmap;
-static XftDraw* xd;
-static Visual* xvis;
+static BoxdrawFillRect fill_rect;
 
-static void drawbox(int, int, int, int, XftColor*, XftColor*, ushort);
-static void drawboxlines(int, int, int, int, XftColor*, ushort);
+static void drawbox(int, int, int, int, const RenderColor*, const RenderColor*,
+                    ushort);
+static void drawboxlines(int, int, int, int, const RenderColor*, ushort);
 
 /* public API */
 
-void boxdraw_xinit(Display* dpy, Colormap cmap, XftDraw* draw, Visual* vis) {
-  xdpy = dpy;
-  xcmap = cmap;
-  xd = draw, xvis = vis;
-}
+void boxdraw_set_fill_rect(BoxdrawFillRect fill) { fill_rect = fill; }
 
 int isboxdraw(Rune u) {
   Rune block = u & ~0xff;
@@ -47,16 +41,16 @@ ushort boxdrawindex(const Glyph* g) {
   return boxdata[(uint8_t)g->u];
 }
 
-void drawboxes(int x, int y, int cw, int ch, XftColor* fg, XftColor* bg,
-               const XftGlyphFontSpec* specs, int len) {
+void drawboxes(int x, int y, int cw, int ch, const RenderColor* fg,
+               const RenderColor* bg, const XftGlyphFontSpec* specs, int len) {
   for (; len-- > 0; x += cw, specs++)
     drawbox(x, y, cw, ch, fg, bg, (ushort)specs->glyph);
 }
 
 /* implementation */
 
-void drawbox(int x, int y, int w, int h, XftColor* fg, XftColor* bg,
-             ushort bd) {
+void drawbox(int x, int y, int w, int h, const RenderColor* fg,
+             const RenderColor* bg, ushort bd) {
   ushort cat = bd & ~(BDB | 0xff); /* mask out bold and data */
   if (bd & (BDL | BDA)) {
     /* lines (light/double/heavy/arcs) */
@@ -65,60 +59,56 @@ void drawbox(int x, int y, int w, int h, XftColor* fg, XftColor* bg,
   } else if (cat == BBD) {
     /* lower (8-X)/8 block */
     int d = DIV((uint8_t)bd * h, 8);
-    XftDrawRect(xd, fg, x, y + d, w, h - d);
+    fill_rect(fg, x, y + d, w, h - d);
 
   } else if (cat == BBU) {
     /* upper X/8 block */
-    XftDrawRect(xd, fg, x, y, w, DIV((uint8_t)bd * h, 8));
+    fill_rect(fg, x, y, w, DIV((uint8_t)bd * h, 8));
 
   } else if (cat == BBL) {
     /* left X/8 block */
-    XftDrawRect(xd, fg, x, y, DIV((uint8_t)bd * w, 8), h);
+    fill_rect(fg, x, y, DIV((uint8_t)bd * w, 8), h);
 
   } else if (cat == BBR) {
     /* right (8-X)/8 block */
     int d = DIV((uint8_t)bd * w, 8);
-    XftDrawRect(xd, fg, x + d, y, w - d, h);
+    fill_rect(fg, x + d, y, w - d, h);
 
   } else if (cat == BBQ) {
     /* Quadrants */
     int w2 = DIV(w, 2), h2 = DIV(h, 2);
-    if (bd & TL) XftDrawRect(xd, fg, x, y, w2, h2);
-    if (bd & TR) XftDrawRect(xd, fg, x + w2, y, w - w2, h2);
-    if (bd & BL) XftDrawRect(xd, fg, x, y + h2, w2, h - h2);
-    if (bd & BR) XftDrawRect(xd, fg, x + w2, y + h2, w - w2, h - h2);
+    if (bd & TL) fill_rect(fg, x, y, w2, h2);
+    if (bd & TR) fill_rect(fg, x + w2, y, w - w2, h2);
+    if (bd & BL) fill_rect(fg, x, y + h2, w2, h - h2);
+    if (bd & BR) fill_rect(fg, x + w2, y + h2, w - w2, h - h2);
 
   } else if (bd & BBS) {
     /* Shades - data is 1/2/3 for 25%/50%/75% alpha, respectively */
     int d = (uint8_t)bd;
-    XftColor xfc;
-    XRenderColor xrc = {.alpha = 0xffff};
-
-    xrc.red = DIV(fg->color.red * d + bg->color.red * (4 - d), 4);
-    xrc.green = DIV(fg->color.green * d + bg->color.green * (4 - d), 4);
-    xrc.blue = DIV(fg->color.blue * d + bg->color.blue * (4 - d), 4);
-
-    XftColorAllocValue(xdpy, xvis, xcmap, &xrc, &xfc);
-    XftDrawRect(xd, &xfc, x, y, w, h);
-    XftColorFree(xdpy, xvis, xcmap, &xfc);
+    RenderColor shade = {.alpha = 0xffff,
+                         .red = DIV(fg->red * d + bg->red * (4 - d), 4),
+                         .green = DIV(fg->green * d + bg->green * (4 - d), 4),
+                         .blue = DIV(fg->blue * d + bg->blue * (4 - d), 4)};
+    fill_rect(&shade, x, y, w, h);
 
   } else if (cat == BRL) {
     /* braille, each data bit corresponds to one dot at 2x4 grid */
     int w1 = DIV(w, 2);
     int h1 = DIV(h, 4), h2 = DIV(h, 2), h3 = DIV(3 * h, 4);
 
-    if (bd & 1) XftDrawRect(xd, fg, x, y, w1, h1);
-    if (bd & 2) XftDrawRect(xd, fg, x, y + h1, w1, h2 - h1);
-    if (bd & 4) XftDrawRect(xd, fg, x, y + h2, w1, h3 - h2);
-    if (bd & 8) XftDrawRect(xd, fg, x + w1, y, w - w1, h1);
-    if (bd & 16) XftDrawRect(xd, fg, x + w1, y + h1, w - w1, h2 - h1);
-    if (bd & 32) XftDrawRect(xd, fg, x + w1, y + h2, w - w1, h3 - h2);
-    if (bd & 64) XftDrawRect(xd, fg, x, y + h3, w1, h - h3);
-    if (bd & 128) XftDrawRect(xd, fg, x + w1, y + h3, w - w1, h - h3);
+    if (bd & 1) fill_rect(fg, x, y, w1, h1);
+    if (bd & 2) fill_rect(fg, x, y + h1, w1, h2 - h1);
+    if (bd & 4) fill_rect(fg, x, y + h2, w1, h3 - h2);
+    if (bd & 8) fill_rect(fg, x + w1, y, w - w1, h1);
+    if (bd & 16) fill_rect(fg, x + w1, y + h1, w - w1, h2 - h1);
+    if (bd & 32) fill_rect(fg, x + w1, y + h2, w - w1, h3 - h2);
+    if (bd & 64) fill_rect(fg, x, y + h3, w1, h - h3);
+    if (bd & 128) fill_rect(fg, x + w1, y + h3, w - w1, h - h3);
   }
 }
 
-void drawboxlines(int x, int y, int w, int h, XftColor* fg, ushort bd) {
+void drawboxlines(int x, int y, int w, int h, const RenderColor* fg,
+                  ushort bd) {
   /* s: stem thickness. width/8 roughly matches underscore thickness. */
   /* We draw bold as 1.5 * normal-stem and at least 1px thicker.      */
   /* doubles draw at least 3px, even when w or h < 3. bold needs 6px. */
@@ -142,10 +132,10 @@ void drawboxlines(int x, int y, int w, int h, XftColor* fg, ushort bd) {
     /* light crosses double only at DH+LV, DV+LH (ref. shapes)  */
     int d = arc || (multi_double && !multi_light) ? -s : 0;
 
-    if (bd & LL) XftDrawRect(xd, fg, x, y + h2, w2 + s + d, s);
-    if (bd & LU) XftDrawRect(xd, fg, x + w2, y, s, h2 + s + d);
-    if (bd & LR) XftDrawRect(xd, fg, x + w2 - d, y + h2, w - w2 + d, s);
-    if (bd & LD) XftDrawRect(xd, fg, x + w2, y + h2 - d, s, h - h2 + d);
+    if (bd & LL) fill_rect(fg, x, y + h2, w2 + s + d, s);
+    if (bd & LU) fill_rect(fg, x + w2, y, s, h2 + s + d);
+    if (bd & LR) fill_rect(fg, x + w2 - d, y + h2, w - w2 + d, s);
+    if (bd & LD) fill_rect(fg, x + w2, y + h2 - d, s, h - h2 + d);
   }
 
   /* double lines - also align with light to form heavy when combined */
@@ -160,23 +150,23 @@ void drawboxlines(int x, int y, int w, int h, XftColor* fg, ushort bd) {
     int dl = bd & DL, du = bd & DU, dr = bd & DR, dd = bd & DD;
     if (dl) {
       int p = dd ? -s : 0, n = du ? -s : dd ? s : 0;
-      XftDrawRect(xd, fg, x, y + h2 + s, w2 + s + p, s);
-      XftDrawRect(xd, fg, x, y + h2 - s, w2 + s + n, s);
+      fill_rect(fg, x, y + h2 + s, w2 + s + p, s);
+      fill_rect(fg, x, y + h2 - s, w2 + s + n, s);
     }
     if (du) {
       int p = dl ? -s : 0, n = dr ? -s : dl ? s : 0;
-      XftDrawRect(xd, fg, x + w2 - s, y, s, h2 + s + p);
-      XftDrawRect(xd, fg, x + w2 + s, y, s, h2 + s + n);
+      fill_rect(fg, x + w2 - s, y, s, h2 + s + p);
+      fill_rect(fg, x + w2 + s, y, s, h2 + s + n);
     }
     if (dr) {
       int p = du ? -s : 0, n = dd ? -s : du ? s : 0;
-      XftDrawRect(xd, fg, x + w2 - p, y + h2 - s, w - w2 + p, s);
-      XftDrawRect(xd, fg, x + w2 - n, y + h2 + s, w - w2 + n, s);
+      fill_rect(fg, x + w2 - p, y + h2 - s, w - w2 + p, s);
+      fill_rect(fg, x + w2 - n, y + h2 + s, w - w2 + n, s);
     }
     if (dd) {
       int p = dr ? -s : 0, n = dl ? -s : dr ? s : 0;
-      XftDrawRect(xd, fg, x + w2 + s, y + h2 - p, s, h - h2 + p);
-      XftDrawRect(xd, fg, x + w2 - s, y + h2 - n, s, h - h2 + n);
+      fill_rect(fg, x + w2 + s, y + h2 - p, s, h - h2 + p);
+      fill_rect(fg, x + w2 - s, y + h2 - n, s, h - h2 + n);
     }
   }
 }

@@ -83,6 +83,12 @@ typedef unsigned int uint;
 typedef unsigned long ulong;
 typedef unsigned short ushort;
 
+/* Backend-neutral color storage. XftColor has the same layout. */
+typedef struct RenderColor {
+  unsigned long pixel;
+  unsigned short red, green, blue, alpha;
+} RenderColor;
+
 typedef uint_least32_t Rune;
 
 #define Glyph Glyph_
@@ -143,10 +149,14 @@ char* xstrdup(const char*);
 
 int isboxdraw(Rune);
 ushort boxdrawindex(const Glyph*);
+
+/* Rectangle fill supplied by the active renderer. */
+typedef void (*BoxdrawFillRect)(const RenderColor*, int, int, int, int);
+void boxdraw_set_fill_rect(BoxdrawFillRect);
+
 #ifdef XFT_VERSION
-/* only exposed to x.c, otherwise we'll need Xft.h for the types */
-void boxdraw_xinit(Display*, Colormap, XftDraw*, Visual*);
-void drawboxes(int, int, int, int, XftColor*, XftColor*,
+/* only exposed to x.c, otherwise we'll need Xft.h for the type */
+void drawboxes(int, int, int, int, const RenderColor*, const RenderColor*,
                const XftGlyphFontSpec*, int);
 #endif
 

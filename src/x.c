@@ -936,6 +936,10 @@ const RendererOps* renderer_current(void) { return renderer; }
 
 Display* xft_display(void) { return xw.dpy; }
 
+Visual* xft_visual(void) { return xw.vis; }
+
+Colormap xft_colormap(void) { return xw.cmap; }
+
 XftDraw* xft_draw_context(void) { return xw.draw; }
 
 void xclear(int x1, int y1, int x2, int y2) {
@@ -1332,7 +1336,7 @@ void xinit(int w, int h) {
   // Initialize the graphics (image display) module.
   gr_init(xw.dpy, xw.vis, xw.cmap);
 
-  boxdraw_xinit(xw.dpy, xw.cmap, xw.draw, xw.vis);
+  render_xft_init();
 }
 
 void xresetfontsettings(ushort mode, Font** font, int* frcflags) {
@@ -1662,7 +1666,8 @@ void xdrawglyphfontspecs(const XftGlyphFontSpec* specs, Glyph base, int len,
   XftDrawSetClip(xw.draw, 0);
 
   if (base.mode & ATTR_BOXDRAW) {
-    drawboxes(winx, winy, width / len, win.ch, fg, bg, specs, len);
+    drawboxes(winx, winy, width / len, win.ch, (const RenderColor*)fg,
+              (const RenderColor*)bg, specs, len);
   } else {
     /* Render the glyphs. */
     XftDrawGlyphFontSpec(xw.draw, fg, specs, len);
