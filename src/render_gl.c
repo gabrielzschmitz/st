@@ -28,6 +28,8 @@
 
 extern Display* xft_display(void);
 extern XftFont* xft_normal_font(void);
+extern Visual* xft_visual(void);
+extern Colormap xft_colormap(void);
 
 #define GL_ATLAS_SIZE 512
 #define GL_ATLAS_PADDING 1
@@ -91,6 +93,19 @@ static size_t gl_quad_capacity;
 static size_t gl_quad_count;
 static int gl_text_ready;
 static int gl_eviction_logged;
+
+typedef struct {
+  RenderColor color;
+  RenderGlyphSpec* specs;
+  int len;
+} GlFallbackBatch;
+
+static GlFallbackBatch* gl_fallback_batches;
+static size_t gl_fallback_count;
+static size_t gl_fallback_capacity;
+static XftDraw* gl_fallback_draw;
+static int gl_fallback_used;
+static int gl_fallback_warned;
 
 typedef void (*gl_swap_interval_ext_fn)(Display*, GLXDrawable, int);
 typedef void (*gl_query_drawable_ext_fn)(Display*, GLXDrawable, int,
@@ -404,13 +419,83 @@ static void gl_append_vertex(float* p, float x, float y, float u, float v,
   p[7] = color[3];
 }
 
+static void gl_fallback_warn(void) {
+  if (gl_fallback_warned) return;
+  gl_fallback_warned = 1;
+  fputs("st: glyph atlas unavailable; using Xft text\n", stderr);
+}
+
+static int gl_fallback_append(const RenderGlyphSpec* specs, int len,
+                              const RenderColor* color) {
+  GlFallbackBatch* batches;
+  GlFallbackBatch* batch;
+  RenderGlyphSpec* copy;
+  size_t capacity;
+
+  if (len <= 0) return 0;
+  if (gl_fallback_count == gl_fallback_capacity) {
+    capacity = gl_fallback_capacity ? gl_fallback_capacity * 2 : 16;
+    batches = realloc(gl_fallback_batches, capacity * sizeof(*batches));
+    if (!batches) return -1;
+    gl_fallback_batches = batches;
+    gl_fallback_capacity = capacity;
+  }
+  copy = malloc((size_t)len * sizeof(*copy));
+  if (!copy) return -1;
+  memcpy(copy, specs, (size_t)len * sizeof(*copy));
+  batch = &gl_fallback_batches[gl_fallback_count++];
+  batch->color = *color;
+  batch->specs = copy;
+  batch->len = len;
+  return 0;
+}
+
+static void gl_fallback_clear(void) {
+  size_t i;
+
+  for (i = 0; i < gl_fallback_count; i++) free(gl_fallback_batches[i].specs);
+  gl_fallback_count = 0;
+  gl_fallback_used = 0;
+}
+
+static void gl_fallback_replay(void) {
+  size_t i;
+
+  if (!gl_fallback_used) return;
+  if (!gl_fallback_draw) {
+    gl_fallback_draw =
+      XftDrawCreate(gl_dpy, gl_win, xft_visual(), xft_colormap());
+    if (!gl_fallback_draw) {
+      if (!gl_fallback_warned) {
+        fputs("st: Xft text fallback unavailable\n", stderr);
+        gl_fallback_warned = 1;
+      }
+      gl_fallback_clear();
+      return;
+    }
+  }
+  for (i = 0; i < gl_fallback_count; i++) {
+    GlFallbackBatch* batch = &gl_fallback_batches[i];
+    XftDrawGlyphFontSpec(gl_fallback_draw, (const XftColor*)&batch->color,
+                         (const XftGlyphFontSpec*)batch->specs, batch->len);
+  }
+  gl_fallback_clear();
+}
+
 static void gl_draw_glyphs(const RenderGlyphSpec* specs, int len,
                            const RenderColor* color) {
   float rgba[4] = {color->red / 65535.0f, color->green / 65535.0f,
                    color->blue / 65535.0f, color->alpha / 65535.0f};
   int i;
 
-  if (!gl_text_ready || !gl_atlas_ready || len <= 0) return;
+  if (!gl_text_ready || !gl_atlas_ready) {
+    if (len > 0) {
+      gl_fallback_warn();
+      if (gl_fallback_append(specs, len, color) == 0) gl_fallback_used = 1;
+    }
+    return;
+  }
+  if (len <= 0) return;
   if (gl_quads_reserve((size_t)len * 6 * GL_QUAD_FLOATS) != 0) return;
   for (i = 0; i < len; i++) {
     GlGlyphEntry* entry;
@@ -419,7 +504,16 @@ static void gl_draw_glyphs(const RenderGlyphSpec* specs, int len,
 
     if (!specs[i].font) continue;
     entry = gl_atlas_get((XftFont*)specs[i].font, specs[i].glyph);
-    if (!entry || entry->width <= 0 || entry->height <= 0) continue;
+    if (!entry) {
+      /* gl_atlas_get disables the atlas when an upload fails. Recover the
+       * current spec through Xft instead of dropping it. */
+      if (!gl_atlas_ready || !gl_text_ready) {
+        gl_fallback_warn();
+        if (gl_fallback_append(&specs[i], 1, color) == 0) gl_fallback_used = 1;
+      }
+      continue;
+    }
+    if (entry->width <= 0 || entry->height <= 0) continue;
 
     /* xmakeglyphfontspecs resolves ATTR_WIDE advances and HarfBuzz combining
      * offsets into spec.x/y. Use those values directly so GL placement matches
@@ -576,14 +670,18 @@ static void gl_setup_vsync(Display* dpy, Window win, int screen) {
 
 static int gl_frame_begin(void) {
   if (!render_xft_ops.frame_begin()) return 0;
+  gl_fallback_clear();
   gl_quad_count = 0;
   gl_eviction_logged = 0;
   return 1;
 }
 
 static void gl_frame_end(void) {
+  int has_quads = gl_quad_count > 0;
+
   gl_flush_glyphs();
-  glXSwapBuffers(gl_dpy, gl_win);
+  if (has_quads) glXSwapBuffers(gl_dpy, gl_win);
+  gl_fallback_replay();
 }
 
 static void gl_resize(int col, int row) {
@@ -646,6 +744,7 @@ static int gl_image_upload(uint32_t image_id, int width, int height,
 static void gl_image_free(uint32_t image_id) { (void)image_id; }
 
 static void gl_resources_reset(void) {
+  gl_fallback_clear();
   gl_quad_count = 0;
   gl_atlas_reset();
 }
@@ -725,6 +824,9 @@ void gl_deinit(void) {
   Display* dpy = gl_dpy;
   GLXContext ctx = gl_ctx;
 
+  if (gl_fallback_draw && dpy) XftDrawDestroy(gl_fallback_draw);
+  gl_fallback_draw = NULL;
+  gl_fallback_clear();
   gl_text_destroy();
   gl_atlas_destroy();
   gl_dpy = NULL;
