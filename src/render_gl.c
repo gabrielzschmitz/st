@@ -169,17 +169,26 @@ const RendererOps render_gl_ops = {
     .resources_reset = gl_resources_reset,
 };
 
-int gl_init(Display* dpy, Window win, XVisualInfo* vis) {
+static int gl_init_fail(const char** reason, const char* message) {
+  if (reason) *reason = message;
+  return 0;
+}
+
+int gl_init(Display* dpy, Window win, XVisualInfo* vis, const char** reason) {
   int attribs[] = {GLX_DOUBLEBUFFER, True, None};
   GLXFBConfig config = NULL;
   GLXFBConfig* configs;
   int nconfigs = 0;
 
-  if (!dpy || win == None || !vis) return 0;
-  if (!glXQueryExtension(dpy, NULL, NULL)) return 0;
+  if (reason) *reason = NULL;
+  if (!dpy || win == None || !vis)
+    return gl_init_fail(reason, "no GLX visual");
+  if (!glXQueryExtension(dpy, NULL, NULL))
+    return gl_init_fail(reason, "no GLX extension");
 
   configs = glXChooseFBConfig(dpy, vis->screen, attribs, &nconfigs);
-  if (!configs) return 0;
+  if (!configs || nconfigs == 0)
+    return gl_init_fail(reason, "no GLX visual");
 
   for (int i = 0; i < nconfigs; i++) {
     XVisualInfo* candidate = glXGetVisualFromFBConfig(dpy, configs[i]);
@@ -189,15 +198,15 @@ int gl_init(Display* dpy, Window win, XVisualInfo* vis) {
     if (config) break;
   }
   XFree(configs);
-  if (!config) return 0;
+  if (!config) return gl_init_fail(reason, "no GLX visual");
 
   gl_ctx = glXCreateNewContext(dpy, config, GLX_RGBA_TYPE, NULL, True);
-  if (!gl_ctx) return 0;
+  if (!gl_ctx) return gl_init_fail(reason, "no GLX context");
 
   if (!glXMakeContextCurrent(dpy, win, win, gl_ctx)) {
     glXDestroyContext(dpy, gl_ctx);
     gl_ctx = NULL;
-    return 0;
+    return gl_init_fail(reason, "no current GLX context");
   }
   gl_dpy = dpy;
   gl_win = win;

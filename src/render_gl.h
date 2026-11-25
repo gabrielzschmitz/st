@@ -21,8 +21,11 @@ int gl_window_width(void);
 int gl_window_height(void);
 RenderColor gl_background_color(void);
 
-/** Create and make current a GLX context for the given window. */
-int gl_init(Display* dpy, Window win, XVisualInfo* vis);
+/**
+ * Create and make current a GLX context for the given window.
+ * On failure, set reason to a short description of the missing GLX piece.
+ */
+int gl_init(Display* dpy, Window win, XVisualInfo* vis, const char** reason);
 
 /** Release the current GLX context. */
 void gl_deinit(void);

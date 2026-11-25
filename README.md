@@ -87,6 +87,10 @@ make -C src ST_WITH_GL=1
 ST_RENDERER=gl src/st
 ```
 
+In GL builds, `ST_RENDERER=auto` tries GL first. If GLX setup fails, st reports
+the missing GLX piece and continues with Xft. `ST_RENDERER=gl` makes GL
+mandatory; setup failure exits with the same reason.
+
 Set `ST_VSYNC=1` to request vsync from the GL renderer. st uses
 `GLX_EXT_swap_control` or `GLX_MESA_swap_control`. If neither is available, st
 logs once and continues unsynced.

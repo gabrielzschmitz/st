@@ -270,6 +270,9 @@ static XWindow xw;
 static XSelection xsel;
 static TermWindow win;
 static const RendererOps* renderer = &render_xft_ops;
+#ifdef ST_WITH_GL
+static int gl_explicit;
+#endif
 const char XdndVersion = 5;
 static unsigned int mouse_col = 0, mouse_row = 0;
 
@@ -937,10 +940,20 @@ int xsetcolorname(int x, const char* name) {
  */
 const RendererOps* renderer_current(void) { return renderer; }
 
+#ifdef ST_WITH_GL
+static void renderer_gl_fail(const char* reason) {
+  if (gl_explicit)
+    die("st: %s; ST_RENDERER=gl was requested explicitly\n", reason);
+  fprintf(stderr, "st: %s; falling back to xft\n", reason);
+  renderer = &render_xft_ops;
+}
+#endif
+
 void renderer_select(const char* name) {
   if (!name) name = "xft";
 #ifdef ST_WITH_GL
-  if (strcmp(name, "gl") == 0) {
+  gl_explicit = strcmp(name, "gl") == 0;
+  if (gl_explicit || strcmp(name, "auto") == 0) {
     renderer = &render_gl_ops;
     atexit(renderer_deinit);
     return;
@@ -948,7 +961,7 @@ void renderer_select(const char* name) {
 #endif
   if (strcmp(name, "xft") != 0)
 #ifdef ST_WITH_GL
-    die("st: unknown renderer '%s'; valid renderers: xft, gl\n", name);
+    die("st: unknown renderer '%s'; valid renderers: xft, auto, gl\n", name);
 #else
     die("st: unknown renderer '%s'; valid renderer: xft\n", name);
 #endif
@@ -1306,15 +1319,17 @@ void xinit(int w, int h) {
   if (renderer == &render_gl_ops) {
     XVisualInfo vinfo = {.visualid = XVisualIDFromVisual(xw.vis)};
     XVisualInfo* glvis;
+    const char* reason = NULL;
     int nvis = 0;
 
     glvis = XGetVisualInfo(xw.dpy, VisualIDMask, &vinfo, &nvis);
-    if (!glvis || nvis == 0) die("st: no GLX visual for window\n");
-    if (!gl_init(xw.dpy, xw.win, glvis)) {
+    if (!glvis || nvis == 0) {
+      renderer_gl_fail("no GLX visual");
+    } else {
+      int failed = !gl_init(xw.dpy, xw.win, glvis, &reason);
       XFree(glvis);
-      die("st: cannot create GLX context\n");
+      if (failed) renderer_gl_fail(reason ? reason : "no GLX context");
     }
-    XFree(glvis);
   }
 #endif
 
