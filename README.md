@@ -73,6 +73,16 @@ sudo nixos-rebuild switch --flake .#nixos
 
 </details>
 
+## Renderer selection
+
+`ST_RENDERER` selects the drawing backend. The default is `xft`. That is also
+the only supported value. An unknown value prints an error and exits before the
+window opens.
+
+```sh
+ST_RENDERER=xft st
+```
+
 ## Renderer benchmarks
 
 Build `st`, then run repeatable terminal-output benchmarks:

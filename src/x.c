@@ -934,6 +934,13 @@ int xsetcolorname(int x, const char* name) {
  */
 const RendererOps* renderer_current(void) { return renderer; }
 
+void renderer_select(const char* name) {
+  if (!name) name = "xft";
+  if (strcmp(name, "xft") != 0)
+    die("st: unknown renderer '%s'; valid renderer: xft\n", name);
+  renderer = &render_xft_ops;
+}
+
 Display* xft_display(void) { return xw.dpy; }
 
 Visual* xft_visual(void) { return xw.vis; }
@@ -2545,6 +2552,7 @@ void usage(void) {
 }
 
 int main(int argc, char* argv[]) {
+  renderer_select(getenv("ST_RENDERER"));
   xw.l = xw.t = 0;
   xw.isfixed = False;
   xsetcursor(cursorstyle);
