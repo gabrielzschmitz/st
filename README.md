@@ -115,10 +115,11 @@ trigger-to-flush latency. These are client-side measurements; they do not prove
 that the X server or compositor presented a frame.
 
 With `--capture`, the benchmark draws a colored test pattern, captures the
-window through the small `benchmarks/xcapture` X11 helper, and fails trials whose
-image looks blank. Xvfb is useful for repeatability and correctness. Compare GPU
-performance on a real display. Results go to `benchmark-results.json`. See
-`python3 benchmarks/benchmark.py --help` for options.
+window through the small `benchmarks/xcapture` X11 helper, and fails trials
+whose image looks blank. Xvfb is useful for repeatability and correctness.
+Compare GPU performance on a actual display. Results go to
+`benchmark-results.json`. See `python3 benchmarks/benchmark.py --help` for
+options.
 
 ### Recording a baseline on the target machine
 
@@ -140,6 +141,7 @@ Use a real display for GPU comparisons. Xvfb only measures software rendering.
    The check reports relative spread `(max-min)/median` for generation
    throughput and `draw_ms_p95`, and exits non-zero when the spread exceeds the
    tolerance.
+
 5. Record the `system`, `machine`, and `display` fields from the JSON with the
    results. They identify the kernel, platform, and X display used for the run.
 6. Repeat the whole procedure in a separate session. The exit criterion is two
