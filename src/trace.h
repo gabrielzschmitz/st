@@ -11,7 +11,7 @@
 #include <stdint.h>
 
 #define TRACE_MAGIC 0x53544254u /* "STBT" */
-#define TRACE_VERSION 2u
+#define TRACE_VERSION 3u
 
 typedef struct {
   uint32_t magic;
@@ -20,7 +20,8 @@ typedef struct {
   uint32_t reserved;
 } TraceHeader;
 
-/* Version 2 record. Version 1 had no sync_ns field. */
+/* Version 3 record. Version 2 had no atlas_evictions field; version 1 also
+ * lacked sync_ns. */
 typedef struct {
   uint64_t frame;
   uint64_t trigger_ns;
@@ -28,6 +29,7 @@ typedef struct {
   uint64_t flush_ns;
   uint64_t sync_ns;
   uint64_t cells;
+  uint64_t atlas_evictions;
 } TraceRecord;
 
 void trace_init(const char* path);
@@ -37,6 +39,7 @@ void trace_frame_begin(void);
 void trace_frame_end(uint64_t cells);
 void trace_frame_flush(void);
 void trace_frame_cancel(void);
+void trace_add_atlas_evictions(uint64_t count);
 void trace_finish(void);
 
 #endif

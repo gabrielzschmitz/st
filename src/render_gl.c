@@ -24,6 +24,7 @@
 
 #include "render.h"
 #include "render_gl.h"
+#include "trace.h"
 
 extern Display* xft_display(void);
 extern XftFont* xft_normal_font(void);
@@ -89,6 +90,7 @@ static float* gl_quad_data;
 static size_t gl_quad_capacity;
 static size_t gl_quad_count;
 static int gl_text_ready;
+static int gl_eviction_logged;
 
 typedef void (*gl_swap_interval_ext_fn)(Display*, GLXDrawable, int);
 typedef void (*gl_query_drawable_ext_fn)(Display*, GLXDrawable, int,
@@ -122,6 +124,15 @@ static void gl_atlas_reset(void) {
   gl_atlas_x = GL_ATLAS_PADDING;
   gl_atlas_y = GL_ATLAS_PADDING;
   gl_atlas_row_height = 0;
+}
+
+static void gl_atlas_evict(void) {
+  gl_atlas_reset();
+  trace_add_atlas_evictions(1);
+  if (!gl_eviction_logged) {
+    fputs("st: glyph atlas full; evicting cache\n", stderr);
+    gl_eviction_logged = 1;
+  }
 }
 
 static void gl_atlas_destroy(void) {
@@ -221,7 +232,7 @@ static GlGlyphEntry* gl_atlas_get(XftFont* font, unsigned int glyph) {
     if (!candidate->valid && !entry) entry = candidate;
   }
   if (!entry) {
-    gl_atlas_reset();
+    gl_atlas_evict();
     entry = &gl_atlas_entries[0];
   }
 
@@ -241,7 +252,7 @@ static GlGlyphEntry* gl_atlas_get(XftFont* font, unsigned int glyph) {
   }
 
   if (gl_atlas_y + consumed_h > GL_ATLAS_SIZE) {
-    gl_atlas_reset();
+    gl_atlas_evict();
     entry = &gl_atlas_entries[0];
   }
   if (gl_atlas_x + consumed_w > GL_ATLAS_SIZE) {
@@ -250,7 +261,7 @@ static GlGlyphEntry* gl_atlas_get(XftFont* font, unsigned int glyph) {
     gl_atlas_row_height = 0;
   }
   if (gl_atlas_y + consumed_h > GL_ATLAS_SIZE) {
-    gl_atlas_reset();
+    gl_atlas_evict();
     entry = &gl_atlas_entries[0];
   }
 
@@ -566,6 +577,7 @@ static void gl_setup_vsync(Display* dpy, Window win, int screen) {
 static int gl_frame_begin(void) {
   if (!render_xft_ops.frame_begin()) return 0;
   gl_quad_count = 0;
+  gl_eviction_logged = 0;
   return 1;
 }
 

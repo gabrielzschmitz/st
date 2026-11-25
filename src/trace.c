@@ -19,6 +19,7 @@ static uint64_t trace_frame_number;
 static uint64_t trace_trigger_ns;
 static uint64_t trace_draw_ns;
 static uint64_t trace_cells;
+static uint64_t trace_atlas_evictions;
 static void (*trace_sync_cb)(void*);
 static void* trace_sync_data;
 
@@ -68,6 +69,7 @@ void trace_frame_begin(void) {
   if (trace_fd < 0) return;
   trace_draw_ns = monotonic_ns();
   trace_cells = 0;
+  trace_atlas_evictions = 0;
 }
 
 void trace_frame_end(uint64_t cells) {
@@ -84,6 +86,7 @@ void trace_frame_flush(void) {
     .flush_ns = monotonic_ns(),
     .sync_ns = 0,
     .cells = trace_cells,
+    .atlas_evictions = trace_atlas_evictions,
   };
   if (trace_sync_cb) {
     trace_sync_cb(trace_sync_data);
@@ -93,12 +96,18 @@ void trace_frame_flush(void) {
   trace_trigger_ns = 0;
   trace_draw_ns = 0;
   trace_cells = 0;
+  trace_atlas_evictions = 0;
 }
 
 void trace_frame_cancel(void) {
   trace_trigger_ns = 0;
   trace_draw_ns = 0;
   trace_cells = 0;
+  trace_atlas_evictions = 0;
+}
+
+void trace_add_atlas_evictions(uint64_t count) {
+  trace_atlas_evictions += count;
 }
 
 void trace_finish(void) {

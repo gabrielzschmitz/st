@@ -22,6 +22,7 @@ TRACE_HEADER = struct.Struct("<4I")
 TRACE_RECORDS = {
     1: struct.Struct("<5Q"),
     2: struct.Struct("<6Q"),
+    3: struct.Struct("<7Q"),
 }
 
 
@@ -173,6 +174,7 @@ def parse_trace(path):
         offset += record_size
         frame, trigger_ns, draw_ns, flush_ns = fields[:4]
         sync_ns, cells = (fields[4], fields[5]) if version >= 2 else (0, fields[4])
+        atlas_evictions = fields[6] if version >= 3 else 0
         if not draw_ns or flush_ns < draw_ns:
             continue
         present_ns = sync_ns if sync_ns >= flush_ns else None
@@ -184,6 +186,7 @@ def parse_trace(path):
             "present_ms": (present_ns - trigger_ns) / 1e6
             if present_ns and trigger_ns else None,
             "cells": cells,
+            "atlas_evictions": atlas_evictions,
         })
     if not frames:
         raise RuntimeError(f"trace contains no completed frames: {path}")
@@ -194,6 +197,7 @@ def parse_trace(path):
     return {
         "frames": len(frames),
         "cells": sum(frame["cells"] for frame in frames),
+        "atlas_evictions": sum(frame["atlas_evictions"] for frame in frames),
         "draw_ms_p50": percentile(draws, 0.50),
         "draw_ms_p95": percentile(draws, 0.95),
         "draw_ms_max": max(draws),
