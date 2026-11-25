@@ -87,6 +87,10 @@ make -C src ST_WITH_GL=1
 ST_RENDERER=gl src/st
 ```
 
+Set `ST_VSYNC=1` to request vsync from the GL renderer. st uses
+`GLX_EXT_swap_control` or `GLX_MESA_swap_control`. If neither is available, st
+logs once and continues unsynced.
+
 ## Renderer benchmarks
 
 Build `st`, then run repeatable terminal-output benchmarks:

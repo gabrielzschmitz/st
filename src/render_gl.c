@@ -5,13 +5,23 @@
 
 /* See LICENSE for license details. */
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <GL/gl.h>
 #include <GL/glx.h>
+#include <GL/glxext.h>
 
 #include "render.h"
 #include "render_gl.h"
+
+typedef void (*gl_swap_interval_ext_fn)(Display*, GLXDrawable, int);
+typedef void (*gl_query_drawable_ext_fn)(Display*, GLXDrawable, int,
+                                         unsigned int*);
+typedef int (*gl_swap_interval_mesa_fn)(unsigned int);
 
 static Display* gl_dpy;
 static GLXContext gl_ctx;
@@ -27,6 +37,48 @@ static void gl_clear_background(void) {
   glClearColor(bg.red / 65535.0f, bg.green / 65535.0f, bg.blue / 65535.0f,
                bg.alpha / 65535.0f);
   glClear(GL_COLOR_BUFFER_BIT);
+}
+
+static void gl_warn_vsync_unavailable(void) {
+  static int warned;
+
+  if (warned) return;
+  warned = 1;
+  fputs("st: ST_VSYNC=1 requested; no GLX swap-control extension, "
+        "continuing unsynced\n",
+        stderr);
+}
+
+static void gl_setup_vsync(Display* dpy, Window win, int screen) {
+  gl_swap_interval_ext_fn swap_interval_ext;
+  gl_query_drawable_ext_fn query_drawable_ext;
+  gl_swap_interval_mesa_fn swap_interval_mesa;
+  const char* extensions;
+  const char* value = getenv("ST_VSYNC");
+  unsigned int interval = 0;
+
+  if (!value || strcmp(value, "1") != 0) return;
+  extensions = glXQueryExtensionsString(dpy, screen);
+
+  swap_interval_ext = (gl_swap_interval_ext_fn)glXGetProcAddress(
+      (const GLubyte*)"glXSwapIntervalEXT");
+  query_drawable_ext = (gl_query_drawable_ext_fn)glXGetProcAddress(
+      (const GLubyte*)"glXQueryDrawable");
+  if (extensions && strstr(extensions, "GLX_EXT_swap_control") &&
+      swap_interval_ext) {
+    swap_interval_ext(dpy, win, 1);
+    if (!query_drawable_ext) return;
+    query_drawable_ext(dpy, win, GLX_SWAP_INTERVAL_EXT, &interval);
+    if (interval > 0) return;
+  }
+
+  swap_interval_mesa = (gl_swap_interval_mesa_fn)glXGetProcAddress(
+      (const GLubyte*)"glXSwapIntervalMESA");
+  if (extensions && strstr(extensions, "GLX_MESA_swap_control") &&
+      swap_interval_mesa && swap_interval_mesa(1) == 0)
+    return;
+
+  gl_warn_vsync_unavailable();
 }
 
 /* Until GL drawing lands, the GL renderer presents only the clear color. */
@@ -150,6 +202,7 @@ int gl_init(Display* dpy, Window win, XVisualInfo* vis) {
   gl_dpy = dpy;
   gl_win = win;
   gl_viewport();
+  gl_setup_vsync(dpy, win, vis->screen);
   return 1;
 }
 
