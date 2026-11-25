@@ -11,8 +11,8 @@
 #include "st.h"
 
 typedef struct RenderColor {
-  unsigned short red, green, blue, alpha;
   unsigned long pixel;
+  unsigned short red, green, blue, alpha;
 } RenderColor;
 
 typedef struct RendererOps RendererOps;

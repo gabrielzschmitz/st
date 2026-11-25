@@ -5,10 +5,25 @@
 
 /* See LICENSE for license details. */
 
+#include <stddef.h>
+
 #include <X11/Xft/Xft.h>
 
 #include "render.h"
 #include "win.h"
+
+_Static_assert(sizeof(RenderColor) == sizeof(XftColor),
+               "RenderColor must match XftColor size");
+_Static_assert(offsetof(RenderColor, pixel) == offsetof(XftColor, pixel),
+               "RenderColor pixel must match XftColor");
+_Static_assert(offsetof(RenderColor, red) == offsetof(XftColor, color.red),
+               "RenderColor red must match XftColor");
+_Static_assert(offsetof(RenderColor, green) == offsetof(XftColor, color.green),
+               "RenderColor green must match XftColor");
+_Static_assert(offsetof(RenderColor, blue) == offsetof(XftColor, color.blue),
+               "RenderColor blue must match XftColor");
+_Static_assert(offsetof(RenderColor, alpha) == offsetof(XftColor, color.alpha),
+               "RenderColor alpha must match XftColor");
 
 extern XftDraw* xft_draw_context(void);
 
