@@ -5,6 +5,8 @@
 
 /* See LICENSE for license details. */
 
+#define GL_GLEXT_PROTOTYPES
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -47,6 +49,46 @@ static int gl_atlas_x = GL_ATLAS_PADDING;
 static int gl_atlas_y = GL_ATLAS_PADDING;
 static int gl_atlas_row_height;
 static int gl_atlas_ready;
+
+#define GL_QUAD_FLOATS 8
+
+static const char gl_vertex_shader[] =
+    "#version 120\n"
+    "attribute vec2 a_position;\n"
+    "attribute vec2 a_texcoord;\n"
+    "attribute vec4 a_color;\n"
+    "uniform vec2 u_viewport;\n"
+    "varying vec2 v_texcoord;\n"
+    "varying vec4 v_color;\n"
+    "void main(void) {\n"
+    "  vec2 zeroToOne = a_position / u_viewport;\n"
+    "  vec2 clip = zeroToOne * 2.0 - 1.0;\n"
+    "  gl_Position = vec4(clip.x, -clip.y, 0.0, 1.0);\n"
+    "  v_texcoord = a_texcoord;\n"
+    "  v_color = a_color;\n"
+    "}\n";
+
+static const char gl_fragment_shader[] =
+    "#version 120\n"
+    "uniform sampler2D u_atlas;\n"
+    "varying vec2 v_texcoord;\n"
+    "varying vec4 v_color;\n"
+    "void main(void) {\n"
+    "  float alpha = texture2D(u_atlas, v_texcoord).r;\n"
+    "  gl_FragColor = vec4(v_color.rgb, v_color.a * alpha);\n"
+    "}\n";
+
+static GLuint gl_text_program;
+static GLuint gl_text_vbo;
+static GLint gl_attr_position = -1;
+static GLint gl_attr_texcoord = -1;
+static GLint gl_attr_color = -1;
+static GLint gl_uniform_viewport = -1;
+static GLint gl_uniform_atlas = -1;
+static float* gl_quad_data;
+static size_t gl_quad_capacity;
+static size_t gl_quad_count;
+static int gl_text_ready;
 
 typedef void (*gl_swap_interval_ext_fn)(Display*, GLXDrawable, int);
 typedef void (*gl_query_drawable_ext_fn)(Display*, GLXDrawable, int,
@@ -234,6 +276,192 @@ static GlGlyphEntry* gl_atlas_get(XftFont* font, unsigned int glyph) {
   return entry;
 }
 
+static GLuint gl_compile_shader(GLenum type, const char* source) {
+  GLuint shader = glCreateShader(type);
+  GLint compiled;
+  char log[512];
+
+  glShaderSource(shader, 1, &source, NULL);
+  glCompileShader(shader);
+  glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
+  if (!compiled) {
+    log[0] = '\0';
+    glGetShaderInfoLog(shader, sizeof(log), NULL, log);
+    fprintf(stderr, "st: glyph shader compile failed: %s\n", log);
+    glDeleteShader(shader);
+    return 0;
+  }
+  return shader;
+}
+
+static void gl_text_destroy(void) {
+  if (gl_text_program) glDeleteProgram(gl_text_program);
+  if (gl_text_vbo) glDeleteBuffers(1, &gl_text_vbo);
+  gl_text_program = 0;
+  gl_text_vbo = 0;
+  gl_attr_position = -1;
+  gl_attr_texcoord = -1;
+  gl_attr_color = -1;
+  gl_uniform_viewport = -1;
+  gl_uniform_atlas = -1;
+  free(gl_quad_data);
+  gl_quad_data = NULL;
+  gl_quad_capacity = 0;
+  gl_quad_count = 0;
+  gl_text_ready = 0;
+}
+
+static int gl_text_create(void) {
+  GLuint vertex, fragment, program;
+  GLint linked;
+  char log[512];
+
+  gl_text_destroy();
+  vertex = gl_compile_shader(GL_VERTEX_SHADER, gl_vertex_shader);
+  if (!vertex) return -1;
+  fragment = gl_compile_shader(GL_FRAGMENT_SHADER, gl_fragment_shader);
+  if (!fragment) {
+    glDeleteShader(vertex);
+    return -1;
+  }
+
+  program = glCreateProgram();
+  glAttachShader(program, vertex);
+  glAttachShader(program, fragment);
+  glLinkProgram(program);
+  glDeleteShader(vertex);
+  glDeleteShader(fragment);
+  glGetProgramiv(program, GL_LINK_STATUS, &linked);
+  if (!linked) {
+    log[0] = '\0';
+    glGetProgramInfoLog(program, sizeof(log), NULL, log);
+    fprintf(stderr, "st: glyph shader link failed: %s\n", log);
+    glDeleteProgram(program);
+    return -1;
+  }
+
+  gl_text_program = program;
+  gl_attr_position = glGetAttribLocation(program, "a_position");
+  gl_attr_texcoord = glGetAttribLocation(program, "a_texcoord");
+  gl_attr_color = glGetAttribLocation(program, "a_color");
+  gl_uniform_viewport = glGetUniformLocation(program, "u_viewport");
+  gl_uniform_atlas = glGetUniformLocation(program, "u_atlas");
+  if (gl_attr_position < 0 || gl_attr_texcoord < 0 || gl_attr_color < 0 ||
+      gl_uniform_viewport < 0 || gl_uniform_atlas < 0) {
+    gl_text_destroy();
+    return -1;
+  }
+
+  glGenBuffers(1, &gl_text_vbo);
+  if (!gl_text_vbo || glGetError() != GL_NO_ERROR) {
+    gl_text_destroy();
+    return -1;
+  }
+
+  gl_text_ready = 1;
+  return 0;
+}
+
+static int gl_quads_reserve(size_t floats) {
+  size_t needed = gl_quad_count + floats;
+  size_t capacity = gl_quad_capacity ? gl_quad_capacity : 4096;
+  float* data;
+
+  if (needed <= gl_quad_capacity) return 0;
+  while (capacity < needed) capacity *= 2;
+  data = realloc(gl_quad_data, capacity * sizeof(float));
+  if (!data) return -1;
+  gl_quad_data = data;
+  gl_quad_capacity = capacity;
+  return 0;
+}
+
+static void gl_append_vertex(float* p, float x, float y, float u, float v,
+                             const float color[4]) {
+  p[0] = x;
+  p[1] = y;
+  p[2] = u;
+  p[3] = v;
+  p[4] = color[0];
+  p[5] = color[1];
+  p[6] = color[2];
+  p[7] = color[3];
+}
+
+static void gl_draw_glyphs(const RenderGlyphSpec* specs, int len,
+                           const RenderColor* color) {
+  float rgba[4] = {color->red / 65535.0f, color->green / 65535.0f,
+                   color->blue / 65535.0f, color->alpha / 65535.0f};
+  int i;
+
+  if (!gl_text_ready || !gl_atlas_ready || len <= 0) return;
+  if (gl_quads_reserve((size_t)len * 6 * GL_QUAD_FLOATS) != 0) return;
+  for (i = 0; i < len; i++) {
+    GlGlyphEntry* entry;
+    float x0, y0, x1, y1, u0, v0, u1, v1;
+    float* p;
+
+    if (!specs[i].font) continue;
+    entry = gl_atlas_get((XftFont*)specs[i].font, specs[i].glyph);
+    if (!entry || entry->width <= 0 || entry->height <= 0) continue;
+
+    x0 = specs[i].x + entry->left;
+    y0 = specs[i].y - entry->top;
+    x1 = x0 + entry->width;
+    y1 = y0 + entry->height;
+    u0 = (entry->x + 0.5f) / GL_ATLAS_SIZE;
+    v0 = (entry->y + 0.5f) / GL_ATLAS_SIZE;
+    u1 = (entry->x + entry->width - 0.5f) / GL_ATLAS_SIZE;
+    v1 = (entry->y + entry->height - 0.5f) / GL_ATLAS_SIZE;
+
+    p = gl_quad_data + gl_quad_count;
+    gl_append_vertex(p, x0, y0, u0, v0, rgba);
+    gl_append_vertex(p + GL_QUAD_FLOATS, x0, y1, u0, v1, rgba);
+    gl_append_vertex(p + 2 * GL_QUAD_FLOATS, x1, y0, u1, v0, rgba);
+    gl_append_vertex(p + 3 * GL_QUAD_FLOATS, x1, y0, u1, v0, rgba);
+    gl_append_vertex(p + 4 * GL_QUAD_FLOATS, x0, y1, u0, v1, rgba);
+    gl_append_vertex(p + 5 * GL_QUAD_FLOATS, x1, y1, u1, v1, rgba);
+    gl_quad_count += 6 * GL_QUAD_FLOATS;
+  }
+}
+
+static void gl_flush_glyphs(void) {
+  size_t stride = GL_QUAD_FLOATS * sizeof(float);
+  void* offset_color = (void*)(4 * sizeof(float));
+
+  if (!gl_text_ready || gl_quad_count == 0) return;
+
+  glUseProgram(gl_text_program);
+  glBindBuffer(GL_ARRAY_BUFFER, gl_text_vbo);
+  glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(gl_quad_count * sizeof(float)),
+               gl_quad_data, GL_STREAM_DRAW);
+  glEnableVertexAttribArray(gl_attr_position);
+  glEnableVertexAttribArray(gl_attr_texcoord);
+  glEnableVertexAttribArray(gl_attr_color);
+  glVertexAttribPointer(gl_attr_position, 2, GL_FLOAT, GL_FALSE, stride, NULL);
+  glVertexAttribPointer(gl_attr_texcoord, 2, GL_FLOAT, GL_FALSE, stride,
+                        (void*)(2 * sizeof(float)));
+  glVertexAttribPointer(gl_attr_color, 4, GL_FLOAT, GL_FALSE, stride,
+                        offset_color);
+
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, gl_atlas_texture);
+  glUniform1i(gl_uniform_atlas, 0);
+  glUniform2f(gl_uniform_viewport, (float)gl_window_width(),
+              (float)gl_window_height());
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  glDisable(GL_DEPTH_TEST);
+  glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(gl_quad_count / GL_QUAD_FLOATS));
+  glDisableVertexAttribArray(gl_attr_position);
+  glDisableVertexAttribArray(gl_attr_texcoord);
+  glDisableVertexAttribArray(gl_attr_color);
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
+  glUseProgram(0);
+
+  gl_quad_count = 0;
+}
+
 static int gl_write_glyph_ppm(const FT_Bitmap* bitmap, const char* path) {
   size_t pitch = (size_t)(bitmap->pitch < 0 ? -bitmap->pitch : bitmap->pitch);
   FILE* fp = fopen(path, "wb");
@@ -327,17 +555,20 @@ static void gl_setup_vsync(Display* dpy, Window win, int screen) {
   gl_warn_vsync_unavailable();
 }
 
-/* Until GL drawing lands, the GL renderer presents only the clear color. */
 static int gl_frame_begin(void) {
   if (!render_xft_ops.frame_begin()) return 0;
-  gl_clear_background();
+  gl_quad_count = 0;
   return 1;
 }
 
-static void gl_frame_end(void) { glXSwapBuffers(gl_dpy, gl_win); }
+static void gl_frame_end(void) {
+  gl_flush_glyphs();
+  glXSwapBuffers(gl_dpy, gl_win);
+}
 
 static void gl_resize(int col, int row) {
   render_xft_ops.resize(col, row);
+  gl_quad_count = 0;
   gl_viewport();
   gl_clear_background();
   glXSwapBuffers(gl_dpy, gl_win);
@@ -394,7 +625,10 @@ static int gl_image_upload(uint32_t image_id, int width, int height,
 
 static void gl_image_free(uint32_t image_id) { (void)image_id; }
 
-static void gl_resources_reset(void) { gl_atlas_reset(); }
+static void gl_resources_reset(void) {
+  gl_quad_count = 0;
+  gl_atlas_reset();
+}
 
 const RendererOps render_gl_ops = {
     .name = "gl",
@@ -406,6 +640,7 @@ const RendererOps render_gl_ops = {
     .draw_cursor = gl_draw_cursor,
     .draw_underline = gl_draw_underline,
     .draw_strike = gl_draw_strike,
+    .draw_glyphs = gl_draw_glyphs,
     .draw_images = gl_draw_images,
     .draw_image_cell = gl_draw_image_cell,
     .images_begin = gl_images_begin,
@@ -460,6 +695,8 @@ int gl_init(Display* dpy, Window win, XVisualInfo* vis, const char** reason) {
   gl_viewport();
   if (gl_atlas_create() != 0)
     fputs("st: glyph atlas allocation failed\n", stderr);
+  if (gl_text_create() != 0)
+    fputs("st: glyph shader setup failed\n", stderr);
   gl_setup_vsync(dpy, win, vis->screen);
   return 1;
 }
@@ -468,6 +705,7 @@ void gl_deinit(void) {
   Display* dpy = gl_dpy;
   GLXContext ctx = gl_ctx;
 
+  gl_text_destroy();
   gl_atlas_destroy();
   gl_dpy = NULL;
   gl_ctx = NULL;

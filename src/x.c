@@ -1756,7 +1756,7 @@ void xdrawglyphfontspecs(const RenderGlyphSpec* specs, Glyph base, int len,
               (const RenderColor*)bg, specs, len);
   } else {
     /* Render the glyphs. */
-    XftDrawGlyphFontSpec(xw.draw, fg, (const XftGlyphFontSpec*)specs, len);
+    renderer->draw_glyphs(specs, len, (const RenderColor*)fg);
   }
 
   /* Render strikethrough. Alway use the fg color. */

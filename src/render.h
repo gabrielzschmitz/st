@@ -37,6 +37,10 @@ struct RendererOps {
   void (*draw_strike)(const RenderColor* color, int x, int y, int width,
                       int thick);
 
+  /* Text drawing from the shared glyph spec buffer. */
+  void (*draw_glyphs)(const RenderGlyphSpec* specs, int len,
+                      const RenderColor* color);
+
   /* Kitty image drawing. */
   void (*draw_images)(Glyph base, Line line, int x1, int y1, int x2);
   void (*draw_image_cell)(Glyph g, int x, int y);

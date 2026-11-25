@@ -143,6 +143,12 @@ static void xft_draw_strike(const RenderColor* color, int x, int y, int width,
   XftDrawRect(xft_draw_context(), (XftColor*)color, x, y, width, thick);
 }
 
+static void xft_draw_glyphs(const RenderGlyphSpec* specs, int len,
+                            const RenderColor* color) {
+  XftDrawGlyphFontSpec(xft_draw_context(), (const XftColor*)color,
+                       (const XftGlyphFontSpec*)specs, len);
+}
+
 const RendererOps render_xft_ops = {
   .name = "xft",
   .frame_begin = xstartdraw,
@@ -153,6 +159,7 @@ const RendererOps render_xft_ops = {
   .draw_cursor = xdrawcursor,
   .draw_underline = xft_draw_underline,
   .draw_strike = xft_draw_strike,
+  .draw_glyphs = xft_draw_glyphs,
   .draw_images = xdrawimages,
   .draw_image_cell = xdrawoneimagecell,
   .images_begin = xstartimagedraw,
