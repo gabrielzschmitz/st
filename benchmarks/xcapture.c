@@ -77,14 +77,14 @@ static void list_windows(Display* dpy, Window root, int depth) {
 
 static unsigned long pixel_component(unsigned long pixel, unsigned long mask) {
   unsigned int shift = 0;
-  unsigned long value;
+  unsigned long shifted_mask = mask;
+
   if (!mask) return 0;
-  while (!(mask & 1)) {
-    mask >>= 1;
+  while (!(shifted_mask & 1)) {
+    shifted_mask >>= 1;
     shift++;
   }
-  value = (pixel & mask) >> shift;
-  return value;
+  return (pixel & mask) >> shift;
 }
 
 int main(int argc, char** argv) {
