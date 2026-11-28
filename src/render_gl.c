@@ -53,6 +53,9 @@ static int gl_atlas_y = GL_ATLAS_PADDING;
 static int gl_atlas_row_height;
 static int gl_atlas_ready;
 
+/* Defined below with the row batch cache. */
+static void gl_rows_invalidate_all(void);
+
 #define GL_QUAD_FLOATS 8
 
 static const char gl_vertex_shader[] =
@@ -77,8 +80,12 @@ static const char gl_fragment_shader[] =
     "varying vec2 v_texcoord;\n"
     "varying vec4 v_color;\n"
     "void main(void) {\n"
-    "  float alpha = texture2D(u_atlas, v_texcoord).r;\n"
-    "  gl_FragColor = vec4(v_color.rgb, v_color.a * alpha);\n"
+    "  if (v_texcoord.x < 0.0) {\n"
+    "    gl_FragColor = v_color;\n"
+    "  } else {\n"
+    "    float alpha = texture2D(u_atlas, v_texcoord).r;\n"
+    "    gl_FragColor = vec4(v_color.rgb, v_color.a * alpha);\n"
+    "  }\n"
     "}\n";
 
 static GLuint gl_text_program;
@@ -100,12 +107,33 @@ typedef struct {
   int len;
 } GlFallbackBatch;
 
-static GlFallbackBatch* gl_fallback_batches;
-static size_t gl_fallback_count;
-static size_t gl_fallback_capacity;
+typedef struct {
+  GlFallbackBatch* batches;
+  size_t count;
+  size_t capacity;
+  int used;
+} GlFallbackList;
+
+typedef struct {
+  float* data;
+  size_t count;
+  size_t capacity;
+  GlFallbackList fallback;
+  int valid;
+} GlRowBatch;
+
+static GlFallbackList gl_fallback_active;
 static XftDraw* gl_fallback_draw;
-static int gl_fallback_used;
 static int gl_fallback_warned;
+
+static GlRowBatch* gl_row_batches;
+static size_t gl_row_count;
+static int* gl_frame_dirty;
+static size_t gl_frame_dirty_count;
+static unsigned char* gl_row_submitted;
+static size_t gl_row_submitted_count;
+static int gl_build_row = -1;
+static int gl_full_rebuild;
 
 typedef void (*gl_swap_interval_ext_fn)(Display*, GLXDrawable, int);
 typedef void (*gl_query_drawable_ext_fn)(Display*, GLXDrawable, int,
@@ -143,6 +171,7 @@ static void gl_atlas_reset(void) {
 
 static void gl_atlas_evict(void) {
   gl_atlas_reset();
+  gl_rows_invalidate_all();
   trace_add_atlas_evictions(1);
   if (!gl_eviction_logged) {
     fputs("st: glyph atlas full; evicting cache\n", stderr);
@@ -425,43 +454,64 @@ static void gl_fallback_warn(void) {
   fputs("st: glyph atlas unavailable; using Xft text\n", stderr);
 }
 
-static int gl_fallback_append(const RenderGlyphSpec* specs, int len,
-                              const RenderColor* color) {
+static int gl_fallback_append_batch(GlFallbackList* list,
+                                    const GlFallbackBatch* source) {
   GlFallbackBatch* batches;
   GlFallbackBatch* batch;
   RenderGlyphSpec* copy;
   size_t capacity;
 
-  if (len <= 0) return 0;
-  if (gl_fallback_count == gl_fallback_capacity) {
-    capacity = gl_fallback_capacity ? gl_fallback_capacity * 2 : 16;
-    batches = realloc(gl_fallback_batches, capacity * sizeof(*batches));
+  if (source->len <= 0 || !source->specs) return 0;
+  if (list->count == list->capacity) {
+    capacity = list->capacity ? list->capacity * 2 : 16;
+    batches = realloc(list->batches, capacity * sizeof(*batches));
     if (!batches) return -1;
-    gl_fallback_batches = batches;
-    gl_fallback_capacity = capacity;
+    list->batches = batches;
+    list->capacity = capacity;
   }
-  copy = malloc((size_t)len * sizeof(*copy));
+  copy = malloc((size_t)source->len * sizeof(*copy));
   if (!copy) return -1;
-  memcpy(copy, specs, (size_t)len * sizeof(*copy));
-  batch = &gl_fallback_batches[gl_fallback_count++];
-  batch->color = *color;
+  memcpy(copy, source->specs, (size_t)source->len * sizeof(*copy));
+  batch = &list->batches[list->count++];
+  batch->color = source->color;
   batch->specs = copy;
-  batch->len = len;
+  batch->len = source->len;
+  list->used = 1;
   return 0;
 }
 
-static void gl_fallback_clear(void) {
-  size_t i;
+static int gl_fallback_append(GlFallbackList* list,
+                              const RenderGlyphSpec* specs, int len,
+                              const RenderColor* color) {
+  GlFallbackBatch batch;
 
-  for (i = 0; i < gl_fallback_count; i++) free(gl_fallback_batches[i].specs);
-  gl_fallback_count = 0;
-  gl_fallback_used = 0;
+  if (len <= 0) return 0;
+  batch.color = *color;
+  batch.specs = (RenderGlyphSpec*)specs;
+  batch.len = len;
+  return gl_fallback_append_batch(list, &batch);
 }
 
-static void gl_fallback_replay(void) {
+static void gl_fallback_list_clear(GlFallbackList* list) {
   size_t i;
 
-  if (!gl_fallback_used) return;
+  for (i = 0; i < list->count; i++) free(list->batches[i].specs);
+  list->count = 0;
+  list->used = 0;
+}
+
+static void gl_fallback_append_list(GlFallbackList* target,
+                                    const GlFallbackList* source) {
+  size_t i;
+
+  for (i = 0; i < source->count; i++)
+    gl_fallback_append_batch(target, &source->batches[i]);
+}
+
+static void gl_fallback_replay(GlFallbackList* list) {
+  size_t i;
+
+  if (!list->used) return;
   if (!gl_fallback_draw) {
     gl_fallback_draw =
       XftDrawCreate(gl_dpy, gl_win, xft_visual(), xft_colormap());
@@ -470,16 +520,127 @@ static void gl_fallback_replay(void) {
         fputs("st: Xft text fallback unavailable\n", stderr);
         gl_fallback_warned = 1;
       }
-      gl_fallback_clear();
+      gl_fallback_list_clear(list);
       return;
     }
   }
-  for (i = 0; i < gl_fallback_count; i++) {
-    GlFallbackBatch* batch = &gl_fallback_batches[i];
+  for (i = 0; i < list->count; i++) {
+    GlFallbackBatch* batch = &list->batches[i];
     XftDrawGlyphFontSpec(gl_fallback_draw, (const XftColor*)&batch->color,
                          (const XftGlyphFontSpec*)batch->specs, batch->len);
   }
-  gl_fallback_clear();
+  gl_fallback_list_clear(list);
+}
+
+static int gl_rows_reserve(size_t rows) {
+  GlRowBatch* batches;
+  size_t i;
+
+  if (rows <= gl_row_count) return 0;
+  batches = realloc(gl_row_batches, rows * sizeof(*batches));
+  if (!batches) return -1;
+  memset(batches + gl_row_count, 0,
+         (rows - gl_row_count) * sizeof(*batches));
+  gl_row_batches = batches;
+  gl_row_count = rows;
+  return 0;
+}
+
+static void gl_row_clear(GlRowBatch* row) {
+  gl_fallback_list_clear(&row->fallback);
+  row->count = 0;
+  row->valid = 0;
+}
+
+static int gl_row_set(GlRowBatch* row, const float* data, size_t count) {
+  float* buffer;
+
+  if (count == 0) {
+    row->count = 0;
+    row->valid = 1;
+    return 0;
+  }
+  if (count > row->capacity) {
+    size_t capacity = row->capacity ? row->capacity : 512;
+    while (capacity < count) capacity *= 2;
+    buffer = realloc(row->data, capacity * sizeof(*buffer));
+    if (!buffer) return -1;
+    row->data = buffer;
+    row->capacity = capacity;
+  }
+  memcpy(row->data, data, count * sizeof(*data));
+  row->count = count;
+  row->valid = 1;
+  return 0;
+}
+
+static void gl_rows_invalidate_all(void) {
+  size_t i;
+
+  for (i = 0; i < gl_row_count; i++) gl_row_clear(&gl_row_batches[i]);
+  gl_full_rebuild = 1;
+}
+
+static int gl_frame_arrays_reserve(size_t rows) {
+  int* dirty;
+  unsigned char* submitted;
+
+  if (gl_rows_reserve(rows) != 0) return -1;
+  if (rows > gl_frame_dirty_count) {
+    dirty = realloc(gl_frame_dirty, rows * sizeof(*dirty));
+    if (!dirty) return -1;
+    memset(dirty + gl_frame_dirty_count, 0,
+           (rows - gl_frame_dirty_count) * sizeof(*dirty));
+    gl_frame_dirty = dirty;
+    gl_frame_dirty_count = rows;
+  }
+  if (rows > gl_row_submitted_count) {
+    submitted = realloc(gl_row_submitted, rows * sizeof(*submitted));
+    if (!submitted) return -1;
+    memset(submitted + gl_row_submitted_count, 0,
+           (rows - gl_row_submitted_count) * sizeof(*submitted));
+    gl_row_submitted = submitted;
+    gl_row_submitted_count = rows;
+  }
+  return 0;
+}
+
+static void gl_row_append(GlRowBatch* row) {
+  if (!row->valid) return;
+  if (row->count && gl_quads_reserve(row->count) == 0) {
+    memcpy(gl_quad_data + gl_quad_count, row->data,
+           row->count * sizeof(*row->data));
+    gl_quad_count += row->count;
+  }
+  gl_fallback_append_list(&gl_fallback_active, &row->fallback);
+}
+
+static void gl_append_rect(int x, int y, int width, int height,
+                           const RenderColor* color) {
+  float rgba[4];
+  float x0, y0, x1, y1;
+  float* p;
+
+  if (width <= 0 || height <= 0 || !color) return;
+  if (gl_quads_reserve(6 * GL_QUAD_FLOATS) != 0) return;
+
+  rgba[0] = color->red / 65535.0f;
+  rgba[1] = color->green / 65535.0f;
+  rgba[2] = color->blue / 65535.0f;
+  rgba[3] = color->alpha / 65535.0f;
+  x0 = (float)x;
+  y0 = (float)y;
+  x1 = (float)(x + width);
+  y1 = (float)(y + height);
+
+  p = gl_quad_data + gl_quad_count;
+  gl_append_vertex(p, x0, y0, -1.0f, -1.0f, rgba);
+  gl_append_vertex(p + GL_QUAD_FLOATS, x0, y1, -1.0f, -1.0f, rgba);
+  gl_append_vertex(p + 2 * GL_QUAD_FLOATS, x1, y0, -1.0f, -1.0f, rgba);
+  gl_append_vertex(p + 3 * GL_QUAD_FLOATS, x1, y0, -1.0f, -1.0f, rgba);
+  gl_append_vertex(p + 4 * GL_QUAD_FLOATS, x0, y1, -1.0f, -1.0f, rgba);
+  gl_append_vertex(p + 5 * GL_QUAD_FLOATS, x1, y1, -1.0f, -1.0f, rgba);
+  gl_quad_count += 6 * GL_QUAD_FLOATS;
 }
 
 static void gl_draw_glyphs(const RenderGlyphSpec* specs, int len,
@@ -491,7 +652,12 @@ static void gl_draw_glyphs(const RenderGlyphSpec* specs, int len,
   if (!gl_text_ready || !gl_atlas_ready) {
     if (len > 0) {
       gl_fallback_warn();
-      if (gl_fallback_append(specs, len, color) == 0) gl_fallback_used = 1;
+      if (gl_build_row >= 0 &&
+          gl_fallback_append(&gl_row_batches[gl_build_row].fallback, specs, len,
+                             color) != 0 &&
+          gl_row_batches[gl_build_row].valid)
+        gl_row_batches[gl_build_row].valid = 0;
+      gl_fallback_append(&gl_fallback_active, specs, len, color);
     }
     return;
   }
@@ -509,7 +675,10 @@ static void gl_draw_glyphs(const RenderGlyphSpec* specs, int len,
        * current spec through Xft instead of dropping it. */
       if (!gl_atlas_ready || !gl_text_ready) {
         gl_fallback_warn();
-        if (gl_fallback_append(&specs[i], 1, color) == 0) gl_fallback_used = 1;
+        if (gl_build_row >= 0)
+          gl_fallback_append(&gl_row_batches[gl_build_row].fallback, &specs[i],
+                             1, color);
+        gl_fallback_append(&gl_fallback_active, &specs[i], 1, color);
       }
       continue;
     }
@@ -670,9 +839,10 @@ static void gl_setup_vsync(Display* dpy, Window win, int screen) {
 
 static int gl_frame_begin(void) {
   if (!render_xft_ops.frame_begin()) return 0;
-  gl_fallback_clear();
+  gl_fallback_list_clear(&gl_fallback_active);
   gl_quad_count = 0;
   gl_eviction_logged = 0;
+  memset(gl_row_submitted, 0, gl_row_submitted_count);
   return 1;
 }
 
@@ -681,11 +851,13 @@ static void gl_frame_end(void) {
 
   gl_flush_glyphs();
   if (has_quads) glXSwapBuffers(gl_dpy, gl_win);
-  gl_fallback_replay();
+  gl_fallback_replay(&gl_fallback_active);
 }
 
 static void gl_resize(int col, int row) {
   render_xft_ops.resize(col, row);
+  gl_rows_invalidate_all();
+  gl_fallback_list_clear(&gl_fallback_active);
   gl_quad_count = 0;
   gl_viewport();
   gl_clear_background();
@@ -694,11 +866,46 @@ static void gl_resize(int col, int row) {
 
 static void gl_clear_rect(int x, int y, int width, int height,
                           const RenderColor* color) {
-  render_xft_ops.clear_rect(x, y, width, height, color);
+  gl_append_rect(x, y, width, height, color);
+}
+
+static int gl_line_has_image(Line line, int x1, int x2) {
+  int x;
+
+  for (x = x1; x < x2; x++) {
+    if (line[x].mode & ATTR_IMAGE) return 1;
+  }
+  return 0;
 }
 
 static void gl_draw_line(Line line, int x1, int y1, int x2) {
+  GlRowBatch* row;
+  size_t quad_start;
+
+  if (y1 < 0 || gl_frame_arrays_reserve((size_t)y1 + 1) != 0) {
+    render_xft_ops.draw_line(line, x1, y1, x2);
+    return;
+  }
+  row = &gl_row_batches[y1];
+  if (gl_row_submitted[y1]) return;
+  gl_row_submitted[y1] = 1;
+
+  if (gl_line_has_image(line, x1, x2)) {
+    render_xft_ops.draw_line(line, x1, y1, x2);
+    return;
+  }
+
+  if (!gl_frame_dirty[y1] && row->valid) {
+    gl_row_append(row);
+    return;
+  }
+
+  quad_start = gl_quad_count;
+  gl_row_clear(row);
+  gl_build_row = y1;
   render_xft_ops.draw_line(line, x1, y1, x2);
+  gl_build_row = -1;
+  gl_row_set(row, gl_quad_data + quad_start, gl_quad_count - quad_start);
 }
 
 static void gl_draw_cursor(int cx, int cy, Glyph g, int ox, int oy, Glyph og,
@@ -727,6 +934,20 @@ static void gl_draw_image_cell(Glyph g, int x, int y) {
 }
 
 static void gl_images_begin(int* dirty, int rows) {
+  size_t i;
+
+  if (gl_frame_arrays_reserve((size_t)rows) == 0) {
+    memcpy(gl_frame_dirty, dirty, (size_t)rows * sizeof(*dirty));
+    if (gl_full_rebuild) {
+      for (i = 0; i < (size_t)rows; i++) gl_frame_dirty[i] = 1;
+      gl_full_rebuild = 0;
+    }
+    for (i = 0; i < (size_t)rows; i++) {
+      if (gl_frame_dirty[i] || !gl_row_batches[i].valid) continue;
+      gl_row_append(&gl_row_batches[i]);
+      gl_row_submitted[i] = 1;
+    }
+  }
   render_xft_ops.images_begin(dirty, rows);
 }
 
@@ -744,7 +965,8 @@ static int gl_image_upload(uint32_t image_id, int width, int height,
 static void gl_image_free(uint32_t image_id) { (void)image_id; }
 
 static void gl_resources_reset(void) {
-  gl_fallback_clear();
+  gl_fallback_list_clear(&gl_fallback_active);
+  gl_rows_invalidate_all();
   gl_quad_count = 0;
   gl_atlas_reset();
 }
@@ -826,7 +1048,7 @@ void gl_deinit(void) {
 
   if (gl_fallback_draw && dpy) XftDrawDestroy(gl_fallback_draw);
   gl_fallback_draw = NULL;
-  gl_fallback_clear();
+  gl_fallback_list_clear(&gl_fallback_active);
   gl_text_destroy();
   gl_atlas_destroy();
   gl_dpy = NULL;
