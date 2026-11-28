@@ -149,10 +149,13 @@ typedef void (*gl_swap_interval_ext_fn)(Display*, GLXDrawable, int);
 typedef void (*gl_query_drawable_ext_fn)(Display*, GLXDrawable, int,
                                          unsigned int*);
 typedef int (*gl_swap_interval_mesa_fn)(unsigned int);
+typedef void (*gl_copy_sub_buffer_mesa_fn)(Display*, GLXDrawable, int, int,
+                                           int, int);
 
 static Display* gl_dpy;
 static GLXContext gl_ctx;
 static Window gl_win;
+static gl_copy_sub_buffer_mesa_fn gl_copy_sub_buffer;
 
 static void gl_viewport(void) {
   glViewport(0, 0, gl_window_width(), gl_window_height());
@@ -953,11 +956,20 @@ static int gl_has_drawables(void) {
   return 0;
 }
 
+static void gl_present(void) {
+  if (gl_copy_sub_buffer) {
+    gl_copy_sub_buffer(gl_dpy, gl_win, 0, 0, gl_window_width(),
+                       gl_window_height());
+  } else {
+    glXSwapBuffers(gl_dpy, gl_win);
+  }
+}
+
 static void gl_frame_end(void) {
   int has_quads = gl_has_drawables();
 
   gl_flush_glyphs();
-  if (has_quads) glXSwapBuffers(gl_dpy, gl_win);
+  if (has_quads) gl_present();
   gl_fallback_replay(&gl_fallback_active);
 }
 
@@ -968,7 +980,7 @@ static void gl_resize(int col, int row) {
   gl_quad_count = 0;
   gl_viewport();
   gl_clear_background();
-  glXSwapBuffers(gl_dpy, gl_win);
+  gl_present();
 }
 
 static int gl_is_background_color(const RenderColor* color) {
@@ -1245,6 +1257,8 @@ int gl_init(Display* dpy, Window win, XVisualInfo* vis, const char** reason) {
   gl_dpy = dpy;
   gl_win = win;
   gl_viewport();
+  gl_copy_sub_buffer = (gl_copy_sub_buffer_mesa_fn)glXGetProcAddress(
+      (const GLubyte*)"glXCopySubBufferMESA");
   if (gl_atlas_create() != 0)
     fputs("st: glyph atlas allocation failed\n", stderr);
   if (gl_text_create() != 0)
@@ -1265,6 +1279,7 @@ void gl_deinit(void) {
   gl_dpy = NULL;
   gl_ctx = NULL;
   gl_win = None;
+  gl_copy_sub_buffer = NULL;
   if (!dpy) return;
   glXMakeContextCurrent(dpy, None, None, NULL);
   if (ctx) glXDestroyContext(dpy, ctx);
