@@ -33,7 +33,7 @@ struct RendererOps {
                       Line line, int len);
   void (*draw_underline)(const RenderColor* color, int x, int y, int width,
                          uint32_t style, int thick, float fthick,
-                         int cell_width, int cell_bottom);
+                         int cell_width, int cell_top, int cell_bottom);
   void (*draw_strike)(const RenderColor* color, int x, int y, int width,
                       int thick);
 

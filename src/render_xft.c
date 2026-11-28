@@ -115,9 +115,12 @@ static void xft_draw_curl(int x, int y, int w, int h, int thick,
 
 static void xft_draw_underline(const RenderColor* color, int x, int y,
                                int width, uint32_t style, int thick,
-                               float fthick, int cell_width, int cell_bottom) {
+                               float fthick, int cell_width, int cell_top,
+                               int cell_bottom) {
   const XftColor* xftcolor = (const XftColor*)color;
   XftDraw* draw = xft_draw_context();
+
+  (void)cell_top;
 
   if (style == UNDERLINE_DOUBLE) {
     int doubleh = thick * 2 + ceilf(fthick * 0.5);

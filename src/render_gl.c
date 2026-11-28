@@ -7,6 +7,7 @@
 
 #define GL_GLEXT_PROTOTYPES
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -913,16 +914,101 @@ static void gl_draw_cursor(int cx, int cy, Glyph g, int ox, int oy, Glyph og,
   render_xft_ops.draw_cursor(cx, cy, g, ox, oy, og, line, len);
 }
 
+static void gl_clipped_rect(const RenderColor* color, int x, int y, int width,
+                            int height, int clipx, int clipy, int clipright,
+                            int clipbottom) {
+  int x0 = MAX(x, clipx);
+  int y0 = MAX(y, clipy);
+  int x1 = MIN(x + width, clipright);
+  int y1 = MIN(y + height, clipbottom);
+
+  gl_append_rect(x0, y0, x1 - x0, y1 - y0, color);
+}
+
+static void gl_draw_dashed(const RenderColor* color, int x, int y, int width,
+                           int wavelen, float fraction, int thick, int clipx,
+                           int clipright) {
+  int dashw = MAX(1, (int)(fraction * wavelen));
+
+  for (int i = x - x % wavelen; i < x + width; i += wavelen) {
+    int startx = MAX(i, x);
+    int endx = MIN(i + dashw, x + width);
+    int visiblex = MAX(startx, clipx);
+    int visiblew = MIN(endx, clipright) - visiblex;
+    if (visiblew > 0) gl_append_rect(visiblex, y, visiblew, thick, color);
+  }
+}
+
+static void gl_draw_curl_line(const RenderColor* color, int x0, int y0, int x1,
+                              int y1, int thick, int clipx, int clipy,
+                              int clipright, int clipbottom) {
+  int dx = x1 - x0;
+  int dy = y1 - y0;
+  int steps = MAX(abs(dx), abs(dy));
+  int half = thick / 2;
+
+  if (steps <= 0) {
+    gl_clipped_rect(color, x0 - half, y0 - half, thick + 1, thick + 1, clipx,
+                    clipy, clipright, clipbottom);
+    return;
+  }
+  for (int i = 0; i <= steps; i++) {
+    int px = x0 + dx * i / steps;
+    int py = y0 + dy * i / steps;
+    gl_clipped_rect(color, px - half, py - half, thick + 1, thick + 1, clipx,
+                    clipy, clipright, clipbottom);
+  }
+}
+
+static void gl_draw_curl(const RenderColor* color, int x, int y, int width,
+                         int height, int thick, int clipx, int clipy,
+                         int clipright, int clipbottom) {
+  int yoffset = thick / 2;
+  int segh = MAX(1, height - thick);
+  int segw = segh;
+  int wavelen = MAX(1, segw * 2);
+
+  for (int i = x - x % wavelen; i < x + width; i += wavelen) {
+    gl_draw_curl_line(color, i, y + yoffset, i + segw, y + yoffset + segh,
+                      thick, clipx, clipy, clipright, clipbottom);
+    gl_draw_curl_line(color, i + segw, y + yoffset + segh, i + wavelen,
+                      y + yoffset, thick, clipx, clipy, clipright, clipbottom);
+  }
+}
+
 static void gl_draw_underline(const RenderColor* color, int x, int y, int width,
                               uint32_t style, int thick, float fthick,
-                              int cell_width, int cell_bottom) {
-  render_xft_ops.draw_underline(color, x, y, width, style, thick, fthick,
-                                cell_width, cell_bottom);
+                              int cell_width, int cell_top, int cell_bottom) {
+  int clipright = x + width;
+
+  if (style == UNDERLINE_DOUBLE) {
+    int doubleh = thick * 2 + (int)ceilf(fthick * 0.5f);
+    int liney = y - MAX(0, y + doubleh - cell_bottom);
+
+    gl_clipped_rect(color, x, liney, width, thick, x, cell_top, clipright,
+                    cell_bottom);
+    gl_clipped_rect(color, x, liney + doubleh - thick, width, thick, x,
+                    cell_top, clipright, cell_bottom);
+  } else if (style == UNDERLINE_DOTTED) {
+    gl_draw_dashed(color, x, y, width, thick * 2, 0.5f, thick, x, clipright);
+  } else if (style == UNDERLINE_DASHED) {
+    int wavelen = MAX(2, (int)(cell_width * 0.9f));
+    gl_draw_dashed(color, x, y, width, wavelen, 0.65f, thick, x, clipright);
+  } else if (style == UNDERLINE_CURLY) {
+    int curlh = thick * 2 + (int)roundf(fthick * 0.75f);
+    int liney = y - MAX(0, y + curlh - cell_bottom);
+
+    gl_draw_curl(color, x, liney, width, curlh, thick, x, cell_top, clipright,
+                 cell_bottom);
+  } else {
+    gl_clipped_rect(color, x, y, width, thick, x, cell_top, clipright,
+                    cell_bottom);
+  }
 }
 
 static void gl_draw_strike(const RenderColor* color, int x, int y, int width,
                            int thick) {
-  render_xft_ops.draw_strike(color, x, y, width, thick);
+  gl_append_rect(x, y, width, thick, color);
 }
 
 static void gl_draw_images(Glyph base, Line line, int x1, int y1, int x2) {

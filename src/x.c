@@ -1745,7 +1745,8 @@ void xdrawglyphfontspecs(const RenderGlyphSpec* specs, Glyph base, int len,
     /* Adjust liney to guarantee that a single underline fits. */
     liney -= MAX(0, liney + thick - (winy + win.ch));
     renderer->draw_underline((const RenderColor*)&decor, winx, liney, width,
-                             style, thick, fthick, win.cw, winy + win.ch);
+                             style, thick, fthick, win.cw, winy,
+                             winy + win.ch);
   }
 
   /* Reset clip to none. */
