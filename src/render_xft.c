@@ -64,7 +64,10 @@ static void xft_boxdraw_fill(const RenderColor* color, int x, int y,
   XftColorFree(dpy, vis, cmap, &xfc);
 }
 
-void render_xft_init(void) { boxdraw_set_fill_rect(xft_boxdraw_fill); }
+void render_xft_init(void) {
+  if (renderer_current() == &render_xft_ops)
+    boxdraw_set_fill_rect(xft_boxdraw_fill);
+}
 
 /* Draws a horizontal dashed line of length `w` starting at `(x, y)`. `wavelen`
  * is the length of the dash plus the length of the gap. `fraction` is the

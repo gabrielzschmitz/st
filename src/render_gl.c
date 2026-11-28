@@ -914,6 +914,16 @@ static void gl_draw_cursor(int cx, int cy, Glyph g, int ox, int oy, Glyph og,
   render_xft_ops.draw_cursor(cx, cy, g, ox, oy, og, line, len);
 }
 
+static void gl_boxdraw_fill(const RenderColor* color, int x, int y, int width,
+                            int height) {
+  gl_append_rect(x, y, width, height, color);
+}
+
+void render_gl_init(void) {
+  boxdraw_set_fill_rect(gl_boxdraw_fill);
+  gl_rows_invalidate_all();
+}
+
 static void gl_clipped_rect(const RenderColor* color, int x, int y, int width,
                             int height, int clipx, int clipy, int clipright,
                             int clipbottom) {

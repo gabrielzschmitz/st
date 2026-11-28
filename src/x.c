@@ -1423,6 +1423,9 @@ void xinit(int w, int h) {
   gr_init(xw.dpy, xw.vis, xw.cmap);
 
   render_xft_init();
+#ifdef ST_WITH_GL
+  if (renderer == &render_gl_ops) render_gl_init();
+#endif
 }
 
 void xresetfontsettings(ushort mode, Font** font, int* frcflags) {

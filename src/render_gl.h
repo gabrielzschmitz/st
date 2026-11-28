@@ -13,8 +13,11 @@
 
 #include "render.h"
 
-/** GLX renderer implementation. Primitives still draw to Xft offscreen. */
+/** GLX renderer implementation. */
 extern const RendererOps render_gl_ops;
+
+/** Install GL callbacks used outside the RendererOps table. */
+void render_gl_init(void);
 
 /** Window geometry and effective background color for GL presentation. */
 int gl_window_width(void);
