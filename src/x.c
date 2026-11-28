@@ -1878,23 +1878,15 @@ void xdrawcursor(int cx, int cy, Glyph g, int ox, int oy, Glyph og, Line line,
         break;
     }
   } else {
-    /*		XftDrawRect(xw.draw, &drawcol,
-                                    win.hborderpx + cx * win.cw,
-                                    win.vborderpx + cy * win.ch,
-                                    win.cw - 1, 1);
-                    XftDrawRect(xw.draw, &drawcol,
-                                    win.hborderpx + cx * win.cw,
-                                    win.vborderpx + cy * win.ch,
-                                    1, win.ch - 1);
-                    XftDrawRect(xw.draw, &drawcol,
-                                    win.hborderpx + (cx + 1) * win.cw - 1,
-                                    win.vborderpx + cy * win.ch,
-                                    1, win.ch - 1);
-                    XftDrawRect(xw.draw, &drawcol,
-                                    win.hborderpx + cx * win.cw,
-                                    win.vborderpx + (cy + 1) * win.ch - 1,
-                                    win.cw, 1);
-    */
+    int x = win.hborderpx + cx * win.cw;
+    int y = win.vborderpx + cy * win.ch;
+
+    renderer->clear_rect(x, y, win.cw - 1, 1, (const RenderColor*)&drawcol);
+    renderer->clear_rect(x, y, 1, win.ch - 1, (const RenderColor*)&drawcol);
+    renderer->clear_rect(x + win.cw - 1, y, 1, win.ch - 1,
+                         (const RenderColor*)&drawcol);
+    renderer->clear_rect(x, y + win.ch - 1, win.cw, 1,
+                         (const RenderColor*)&drawcol);
   }
 }
 
