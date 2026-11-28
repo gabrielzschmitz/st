@@ -56,6 +56,7 @@ static int gl_atlas_ready;
 
 /* Defined below with the row batch cache. */
 static void gl_rows_invalidate_all(void);
+static int gl_has_drawables(void);
 
 #define GL_QUAD_FLOATS 8
 
@@ -99,6 +100,12 @@ static GLint gl_uniform_atlas = -1;
 static float* gl_quad_data;
 static size_t gl_quad_capacity;
 static size_t gl_quad_count;
+static float* gl_upload_scratch;
+static size_t gl_upload_scratch_capacity;
+static size_t gl_vbo_capacity;
+static size_t gl_vbo_row_total;
+static size_t gl_vbo_dynamic_start;
+static size_t gl_vbo_dynamic_reserve = 4096;
 static int gl_text_ready;
 static int gl_eviction_logged;
 
@@ -119,8 +126,10 @@ typedef struct {
   float* data;
   size_t count;
   size_t capacity;
+  size_t start;
   GlFallbackList fallback;
   int valid;
+  int upload_pending;
 } GlRowBatch;
 
 static GlFallbackList gl_fallback_active;
@@ -365,10 +374,16 @@ static void gl_text_destroy(void) {
   gl_attr_color = -1;
   gl_uniform_viewport = -1;
   gl_uniform_atlas = -1;
+  free(gl_upload_scratch);
+  gl_upload_scratch = NULL;
+  gl_upload_scratch_capacity = 0;
   free(gl_quad_data);
   gl_quad_data = NULL;
   gl_quad_capacity = 0;
   gl_quad_count = 0;
+  gl_vbo_capacity = 0;
+  gl_vbo_row_total = 0;
+  gl_vbo_dynamic_start = 0;
   gl_text_ready = 0;
 }
 
@@ -551,6 +566,7 @@ static void gl_row_clear(GlRowBatch* row) {
   gl_fallback_list_clear(&row->fallback);
   row->count = 0;
   row->valid = 0;
+  row->upload_pending = 0;
 }
 
 static int gl_row_set(GlRowBatch* row, const float* data, size_t count) {
@@ -573,6 +589,76 @@ static int gl_row_set(GlRowBatch* row, const float* data, size_t count) {
   row->count = count;
   row->valid = 1;
   return 0;
+}
+
+static int gl_vbo_layout(void) {
+  size_t i, total = 0;
+
+  if (!gl_text_ready || !gl_text_vbo) return -1;
+  for (i = 0; i < gl_row_count; i++) {
+    GlRowBatch* row = &gl_row_batches[i];
+    if (!row->valid || !row->count) continue;
+    row->start = total;
+    total += row->count;
+  }
+  gl_vbo_row_total = total;
+  gl_vbo_dynamic_start = total;
+  total += gl_vbo_dynamic_reserve;
+
+  glBindBuffer(GL_ARRAY_BUFFER, gl_text_vbo);
+  glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(total * sizeof(float)), NULL,
+               GL_DYNAMIC_DRAW);
+  if (glGetError() != GL_NO_ERROR) {
+    gl_vbo_capacity = 0;
+    return -1;
+  }
+  gl_vbo_capacity = total;
+  for (i = 0; i < gl_row_count; i++) {
+    GlRowBatch* row = &gl_row_batches[i];
+    if (!row->valid || !row->count) continue;
+    glBufferSubData(GL_ARRAY_BUFFER, (GLintptr)(row->start * sizeof(float)),
+                    (GLsizeiptr)(row->count * sizeof(float)), row->data);
+    row->upload_pending = 0;
+  }
+  return glGetError() == GL_NO_ERROR ? 0 : -1;
+}
+
+static int gl_vbo_upload_pending(void) {
+  size_t i, offset = 0, upload_start = 0;
+  int relayout = 0;
+  int has_pending = 0;
+
+  for (i = 0; i < gl_row_count; i++) {
+    GlRowBatch* row = &gl_row_batches[i];
+    if (!row->valid || !row->count) continue;
+    if (row->start != offset) relayout = 1;
+    if (row->upload_pending && !has_pending) upload_start = offset;
+    if (row->upload_pending) has_pending = 1;
+    offset += row->count;
+  }
+  if (offset != gl_vbo_row_total) relayout = 1;
+  if (relayout) return gl_vbo_layout();
+  if (!has_pending) return 0;
+  if (!gl_vbo_capacity || !gl_text_vbo) return -1;
+  if (offset > gl_upload_scratch_capacity) {
+    float* resized = realloc(gl_upload_scratch, offset * sizeof(*resized));
+    if (!resized) return -1;
+    gl_upload_scratch = resized;
+    gl_upload_scratch_capacity = offset;
+  }
+
+  for (i = 0; i < gl_row_count; i++) {
+    GlRowBatch* row = &gl_row_batches[i];
+    if (!row->valid || !row->count) continue;
+    memcpy(gl_upload_scratch + row->start, row->data,
+           row->count * sizeof(*gl_upload_scratch));
+    row->upload_pending = 0;
+  }
+  glBindBuffer(GL_ARRAY_BUFFER, gl_text_vbo);
+  glBufferSubData(GL_ARRAY_BUFFER, (GLintptr)(upload_start * sizeof(float)),
+                  (GLsizeiptr)((offset - upload_start) * sizeof(float)),
+                  gl_upload_scratch + upload_start);
+  return glGetError() == GL_NO_ERROR ? 0 : -1;
 }
 
 static void gl_rows_invalidate_all(void) {
@@ -606,13 +692,8 @@ static int gl_frame_arrays_reserve(size_t rows) {
   return 0;
 }
 
-static void gl_row_append(GlRowBatch* row) {
+static void gl_row_replay(GlRowBatch* row) {
   if (!row->valid) return;
-  if (row->count && gl_quads_reserve(row->count) == 0) {
-    memcpy(gl_quad_data + gl_quad_count, row->data,
-           row->count * sizeof(*row->data));
-    gl_quad_count += row->count;
-  }
   gl_fallback_append_list(&gl_fallback_active, &row->fallback);
 }
 
@@ -711,13 +792,27 @@ static void gl_draw_glyphs(const RenderGlyphSpec* specs, int len,
 static void gl_flush_glyphs(void) {
   size_t stride = GL_QUAD_FLOATS * sizeof(float);
   void* offset_color = (void*)(4 * sizeof(float));
+  size_t total;
 
-  if (!gl_text_ready || gl_quad_count == 0) return;
+  if (!gl_text_ready || !gl_has_drawables()) return;
+  if (gl_quad_count > gl_vbo_capacity - gl_vbo_dynamic_start) {
+    size_t reserve = gl_vbo_dynamic_reserve ? gl_vbo_dynamic_reserve : 4096;
+    while (reserve < gl_quad_count) reserve *= 2;
+    gl_vbo_dynamic_reserve = reserve;
+    if (gl_vbo_layout() != 0) return;
+  } else if (gl_vbo_upload_pending() != 0) {
+    return;
+  }
+  if (!gl_vbo_capacity) return;
 
+  total = gl_vbo_row_total + gl_quad_count;
   glUseProgram(gl_text_program);
   glBindBuffer(GL_ARRAY_BUFFER, gl_text_vbo);
-  glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(gl_quad_count * sizeof(float)),
-               gl_quad_data, GL_STREAM_DRAW);
+  if (gl_quad_count) {
+    glBufferSubData(GL_ARRAY_BUFFER,
+                    (GLintptr)(gl_vbo_dynamic_start * sizeof(float)),
+                    (GLsizeiptr)(gl_quad_count * sizeof(float)), gl_quad_data);
+  }
   glEnableVertexAttribArray(gl_attr_position);
   glEnableVertexAttribArray(gl_attr_texcoord);
   glEnableVertexAttribArray(gl_attr_color);
@@ -735,7 +830,7 @@ static void gl_flush_glyphs(void) {
   glEnable(GL_BLEND);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
   glDisable(GL_DEPTH_TEST);
-  glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(gl_quad_count / GL_QUAD_FLOATS));
+  glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(total / GL_QUAD_FLOATS));
   glDisableVertexAttribArray(gl_attr_position);
   glDisableVertexAttribArray(gl_attr_texcoord);
   glDisableVertexAttribArray(gl_attr_color);
@@ -844,11 +939,22 @@ static int gl_frame_begin(void) {
   gl_quad_count = 0;
   gl_eviction_logged = 0;
   memset(gl_row_submitted, 0, gl_row_submitted_count);
+  gl_clear_background();
   return 1;
 }
 
+static int gl_has_drawables(void) {
+  size_t i;
+
+  if (gl_quad_count) return 1;
+  for (i = 0; i < gl_row_count; i++) {
+    if (gl_row_batches[i].valid && gl_row_batches[i].count) return 1;
+  }
+  return 0;
+}
+
 static void gl_frame_end(void) {
-  int has_quads = gl_quad_count > 0;
+  int has_quads = gl_has_drawables();
 
   gl_flush_glyphs();
   if (has_quads) glXSwapBuffers(gl_dpy, gl_win);
@@ -865,8 +971,16 @@ static void gl_resize(int col, int row) {
   glXSwapBuffers(gl_dpy, gl_win);
 }
 
+static int gl_is_background_color(const RenderColor* color) {
+  RenderColor bg = gl_background_color();
+
+  return color->red == bg.red && color->green == bg.green &&
+         color->blue == bg.blue && color->alpha == bg.alpha;
+}
+
 static void gl_clear_rect(int x, int y, int width, int height,
                           const RenderColor* color) {
+  if (gl_is_background_color(color)) return;
   gl_append_rect(x, y, width, height, color);
 }
 
@@ -881,7 +995,6 @@ static int gl_line_has_image(Line line, int x1, int x2) {
 
 static void gl_draw_line(Line line, int x1, int y1, int x2) {
   GlRowBatch* row;
-  size_t quad_start;
 
   if (y1 < 0 || gl_frame_arrays_reserve((size_t)y1 + 1) != 0) {
     render_xft_ops.draw_line(line, x1, y1, x2);
@@ -897,16 +1010,18 @@ static void gl_draw_line(Line line, int x1, int y1, int x2) {
   }
 
   if (!gl_frame_dirty[y1] && row->valid) {
-    gl_row_append(row);
+    gl_row_replay(row);
     return;
   }
 
-  quad_start = gl_quad_count;
   gl_row_clear(row);
+  gl_quad_count = 0;
   gl_build_row = y1;
   render_xft_ops.draw_line(line, x1, y1, x2);
   gl_build_row = -1;
-  gl_row_set(row, gl_quad_data + quad_start, gl_quad_count - quad_start);
+  gl_row_set(row, gl_quad_data, gl_quad_count);
+  row->upload_pending = 1;
+  gl_quad_count = 0;
 }
 
 static void gl_draw_cursor(int cx, int cy, Glyph g, int ox, int oy, Glyph og,
@@ -1040,7 +1155,7 @@ static void gl_images_begin(int* dirty, int rows) {
     }
     for (i = 0; i < (size_t)rows; i++) {
       if (gl_frame_dirty[i] || !gl_row_batches[i].valid) continue;
-      gl_row_append(&gl_row_batches[i]);
+      gl_row_replay(&gl_row_batches[i]);
       gl_row_submitted[i] = 1;
     }
   }
