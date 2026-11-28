@@ -8,6 +8,7 @@
 #define GL_GLEXT_PROTOTYPES
 
 #include <math.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -35,6 +36,9 @@ extern Colormap xft_colormap(void);
 #define GL_ATLAS_SIZE 512
 #define GL_ATLAS_PADDING 1
 #define GL_ATLAS_ENTRIES 4096
+#define GL_ATLAS_TABLE (GL_ATLAS_ENTRIES * 2)
+#define GL_QUAD_VERTICES 4
+#define GL_QUAD_INDICES 6
 
 typedef struct {
   int valid;
@@ -49,6 +53,7 @@ typedef struct {
 
 static GLuint gl_atlas_texture;
 static GlGlyphEntry gl_atlas_entries[GL_ATLAS_ENTRIES];
+static int gl_atlas_index[GL_ATLAS_TABLE];
 static int gl_atlas_x = GL_ATLAS_PADDING;
 static int gl_atlas_y = GL_ATLAS_PADDING;
 static int gl_atlas_row_height;
@@ -92,6 +97,13 @@ static const char gl_fragment_shader[] =
 
 static GLuint gl_text_program;
 static GLuint gl_text_vbo;
+static GLuint gl_text_ibo;
+static GLuint gl_text_ibo32;
+static GLushort* gl_index_data;
+static GLuint* gl_index_data32;
+static size_t gl_index_capacity;
+static size_t gl_index_capacity32;
+static int gl_index_32bit;
 static GLint gl_attr_position = -1;
 static GLint gl_attr_texcoord = -1;
 static GLint gl_attr_color = -1;
@@ -144,6 +156,7 @@ static unsigned char* gl_row_submitted;
 static size_t gl_row_submitted_count;
 static int gl_build_row = -1;
 static int gl_full_rebuild;
+static int gl_clear_pending;
 
 typedef void (*gl_swap_interval_ext_fn)(Display*, GLXDrawable, int);
 typedef void (*gl_query_drawable_ext_fn)(Display*, GLXDrawable, int,
@@ -169,14 +182,69 @@ static void gl_clear_background(void) {
   glClear(GL_COLOR_BUFFER_BIT);
 }
 
+static void gl_clear_if_pending(void) {
+  if (!gl_clear_pending) return;
+  gl_clear_background();
+  gl_clear_pending = 0;
+}
+
 static int gl_prepare_glyph(FT_Face face, unsigned int glyph) {
   if (FT_Load_Glyph(face, (FT_UInt)glyph, FT_LOAD_DEFAULT) != 0) return -1;
   if (FT_Render_Glyph(face->glyph, FT_RENDER_MODE_NORMAL) != 0) return -1;
   return 0;
 }
 
+static size_t gl_atlas_bucket(XftFont* font, unsigned int glyph,
+                              int pixel_size, int style) {
+  uint64_t hash = 1469598103934665603ULL;
+  uint64_t values[4] = {(uint64_t)(uintptr_t)font, glyph,
+                        (uint32_t)pixel_size, (uint32_t)style};
+  size_t i;
+
+  for (i = 0; i < sizeof(values) / sizeof(values[0]); i++)
+    hash = (hash ^ values[i]) * 1099511628211ULL;
+  return (size_t)(hash & (GL_ATLAS_TABLE - 1));
+}
+
+static GlGlyphEntry* gl_atlas_find(XftFont* font, unsigned int glyph,
+                                   int pixel_size, int style) {
+  size_t bucket = gl_atlas_bucket(font, glyph, pixel_size, style);
+  size_t i;
+
+  for (i = 0; i < GL_ATLAS_TABLE; i++) {
+    int slot = gl_atlas_index[(bucket + i) & (GL_ATLAS_TABLE - 1)];
+    GlGlyphEntry* candidate;
+
+    if (!slot) return NULL;
+    candidate = &gl_atlas_entries[slot - 1];
+    if (candidate->valid && candidate->font == font &&
+        candidate->glyph == glyph && candidate->pixel_size == pixel_size &&
+        candidate->style == style)
+      return candidate;
+  }
+  return NULL;
+}
+
+static void gl_atlas_insert(GlGlyphEntry* entry) {
+  size_t index = (size_t)(entry - gl_atlas_entries) + 1;
+  size_t bucket = gl_atlas_bucket(entry->font, entry->glyph, entry->pixel_size,
+                                  entry->style);
+  size_t i;
+
+  for (i = 0; i < GL_ATLAS_TABLE; i++) {
+    size_t slot = (bucket + i) & (GL_ATLAS_TABLE - 1);
+
+    if (gl_atlas_index[slot] == (int)index) return;
+    if (!gl_atlas_index[slot]) {
+      gl_atlas_index[slot] = (int)index;
+      return;
+    }
+  }
+}
+
 static void gl_atlas_reset(void) {
   memset(gl_atlas_entries, 0, sizeof(gl_atlas_entries));
+  memset(gl_atlas_index, 0, sizeof(gl_atlas_index));
   gl_atlas_x = GL_ATLAS_PADDING;
   gl_atlas_y = GL_ATLAS_PADDING;
   gl_atlas_row_height = 0;
@@ -197,6 +265,7 @@ static void gl_atlas_destroy(void) {
   gl_atlas_texture = 0;
   gl_atlas_ready = 0;
   memset(gl_atlas_entries, 0, sizeof(gl_atlas_entries));
+  memset(gl_atlas_index, 0, sizeof(gl_atlas_index));
   gl_atlas_x = GL_ATLAS_PADDING;
   gl_atlas_y = GL_ATLAS_PADDING;
   gl_atlas_row_height = 0;
@@ -268,6 +337,7 @@ static int gl_atlas_upload(GlGlyphEntry* entry, const FT_Bitmap* bitmap) {
 
 static GlGlyphEntry* gl_atlas_get(XftFont* font, unsigned int glyph) {
   GlGlyphEntry* entry = NULL;
+  GlGlyphEntry* hit;
   FT_Face face;
   FT_Bitmap* bitmap;
   int pixel_size, style, consumed_w, consumed_h;
@@ -280,13 +350,13 @@ static GlGlyphEntry* gl_atlas_get(XftFont* font, unsigned int glyph) {
   /* The face pointer is part of the key. Fallback faces from frc[] therefore
    * cannot collide with the primary face or with each other, even when they
    * assign the same glyph index. */
+  hit = gl_atlas_find(font, glyph, pixel_size, style);
+  if (hit) return hit;
   for (i = 0; i < GL_ATLAS_ENTRIES; i++) {
-    GlGlyphEntry* candidate = &gl_atlas_entries[i];
-    if (candidate->valid && candidate->font == font &&
-        candidate->glyph == glyph && candidate->pixel_size == pixel_size &&
-        candidate->style == style)
-      return candidate;
-    if (!candidate->valid && !entry) entry = candidate;
+    if (!gl_atlas_entries[i].valid) {
+      entry = &gl_atlas_entries[i];
+      break;
+    }
   }
   if (!entry) {
     gl_atlas_evict();
@@ -343,6 +413,7 @@ static GlGlyphEntry* gl_atlas_get(XftFont* font, unsigned int glyph) {
   }
 
   entry->valid = 1;
+  gl_atlas_insert(entry);
   gl_atlas_x += consumed_w;
   gl_atlas_row_height = MAX(gl_atlas_row_height, consumed_h);
   XftUnlockFace(font);
@@ -370,8 +441,19 @@ static GLuint gl_compile_shader(GLenum type, const char* source) {
 static void gl_text_destroy(void) {
   if (gl_text_program) glDeleteProgram(gl_text_program);
   if (gl_text_vbo) glDeleteBuffers(1, &gl_text_vbo);
+  if (gl_text_ibo) glDeleteBuffers(1, &gl_text_ibo);
+  if (gl_text_ibo32) glDeleteBuffers(1, &gl_text_ibo32);
   gl_text_program = 0;
   gl_text_vbo = 0;
+  gl_text_ibo = 0;
+  gl_text_ibo32 = 0;
+  free(gl_index_data);
+  free(gl_index_data32);
+  gl_index_data = NULL;
+  gl_index_data32 = NULL;
+  gl_index_capacity = 0;
+  gl_index_capacity32 = 0;
+  gl_index_32bit = 0;
   gl_attr_position = -1;
   gl_attr_texcoord = -1;
   gl_attr_color = -1;
@@ -392,6 +474,7 @@ static void gl_text_destroy(void) {
 
 static int gl_text_create(void) {
   GLuint vertex, fragment, program;
+  GLuint gl_buffers[3];
   GLint linked;
   char log[512];
 
@@ -431,8 +514,12 @@ static int gl_text_create(void) {
     return -1;
   }
 
-  glGenBuffers(1, &gl_text_vbo);
-  if (!gl_text_vbo || glGetError() != GL_NO_ERROR) {
+  glGenBuffers(3, gl_buffers);
+  gl_text_vbo = gl_buffers[0];
+  gl_text_ibo = gl_buffers[1];
+  gl_text_ibo32 = gl_buffers[2];
+  if (!gl_text_vbo || !gl_text_ibo || !gl_text_ibo32 ||
+      glGetError() != GL_NO_ERROR) {
     gl_text_destroy();
     return -1;
   }
@@ -594,6 +681,66 @@ static int gl_row_set(GlRowBatch* row, const float* data, size_t count) {
   return 0;
 }
 
+static int gl_indices_layout(size_t capacity_floats) {
+  size_t quads = capacity_floats / GL_QUAD_FLOATS / GL_QUAD_VERTICES;
+  size_t needed = quads * GL_QUAD_INDICES;
+  size_t q;
+
+  gl_index_32bit = quads > 16383;
+  if (gl_index_32bit) {
+    GLuint* data = NULL;
+
+    if (!gl_text_ibo32) return -1;
+    if (needed > gl_index_capacity32) {
+      data = realloc(gl_index_data32, needed * sizeof(*data));
+      if (!data) return -1;
+      gl_index_data32 = data;
+      gl_index_capacity32 = needed;
+    }
+    for (q = 0; q < quads; q++) {
+      GLuint base = (GLuint)(q * GL_QUAD_VERTICES);
+      GLuint* p = gl_index_data32 + q * GL_QUAD_INDICES;
+
+      p[0] = base;
+      p[1] = base + 1;
+      p[2] = base + 2;
+      p[3] = base + 2;
+      p[4] = base + 1;
+      p[5] = base + 3;
+    }
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gl_text_ibo32);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                 (GLsizeiptr)(needed * sizeof(*gl_index_data32)),
+                 gl_index_data32, GL_STATIC_DRAW);
+  } else {
+    GLushort* data = NULL;
+
+    if (!gl_text_ibo) return -1;
+    if (needed > gl_index_capacity) {
+      data = realloc(gl_index_data, needed * sizeof(*data));
+      if (!data) return -1;
+      gl_index_data = data;
+      gl_index_capacity = needed;
+    }
+    for (q = 0; q < quads; q++) {
+      GLushort base = (GLushort)(q * GL_QUAD_VERTICES);
+      GLushort* p = gl_index_data + q * GL_QUAD_INDICES;
+
+      p[0] = base;
+      p[1] = base + 1;
+      p[2] = base + 2;
+      p[3] = base + 2;
+      p[4] = base + 1;
+      p[5] = base + 3;
+    }
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gl_text_ibo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                 (GLsizeiptr)(needed * sizeof(*gl_index_data)), gl_index_data,
+                 GL_STATIC_DRAW);
+  }
+  return glGetError() == GL_NO_ERROR ? 0 : -1;
+}
+
 static int gl_vbo_layout(void) {
   size_t i, total = 0;
 
@@ -616,6 +763,11 @@ static int gl_vbo_layout(void) {
     return -1;
   }
   gl_vbo_capacity = total;
+  if (gl_indices_layout(total) != 0) {
+    gl_vbo_capacity = 0;
+    return -1;
+  }
+  glBindBuffer(GL_ARRAY_BUFFER, gl_text_vbo);
   for (i = 0; i < gl_row_count; i++) {
     GlRowBatch* row = &gl_row_batches[i];
     if (!row->valid || !row->count) continue;
@@ -707,7 +859,7 @@ static void gl_append_rect(int x, int y, int width, int height,
   float* p;
 
   if (width <= 0 || height <= 0 || !color) return;
-  if (gl_quads_reserve(6 * GL_QUAD_FLOATS) != 0) return;
+  if (gl_quads_reserve(GL_QUAD_VERTICES * GL_QUAD_FLOATS) != 0) return;
 
   rgba[0] = color->red / 65535.0f;
   rgba[1] = color->green / 65535.0f;
@@ -722,10 +874,8 @@ static void gl_append_rect(int x, int y, int width, int height,
   gl_append_vertex(p, x0, y0, -1.0f, -1.0f, rgba);
   gl_append_vertex(p + GL_QUAD_FLOATS, x0, y1, -1.0f, -1.0f, rgba);
   gl_append_vertex(p + 2 * GL_QUAD_FLOATS, x1, y0, -1.0f, -1.0f, rgba);
-  gl_append_vertex(p + 3 * GL_QUAD_FLOATS, x1, y0, -1.0f, -1.0f, rgba);
-  gl_append_vertex(p + 4 * GL_QUAD_FLOATS, x0, y1, -1.0f, -1.0f, rgba);
-  gl_append_vertex(p + 5 * GL_QUAD_FLOATS, x1, y1, -1.0f, -1.0f, rgba);
-  gl_quad_count += 6 * GL_QUAD_FLOATS;
+  gl_append_vertex(p + 3 * GL_QUAD_FLOATS, x1, y1, -1.0f, -1.0f, rgba);
+  gl_quad_count += GL_QUAD_VERTICES * GL_QUAD_FLOATS;
 }
 
 static void gl_draw_glyphs(const RenderGlyphSpec* specs, int len,
@@ -747,7 +897,8 @@ static void gl_draw_glyphs(const RenderGlyphSpec* specs, int len,
     return;
   }
   if (len <= 0) return;
-  if (gl_quads_reserve((size_t)len * 6 * GL_QUAD_FLOATS) != 0) return;
+  if (gl_quads_reserve((size_t)len * GL_QUAD_VERTICES * GL_QUAD_FLOATS) != 0)
+    return;
   for (i = 0; i < len; i++) {
     GlGlyphEntry* entry;
     float x0, y0, x1, y1, u0, v0, u1, v1;
@@ -785,17 +936,15 @@ static void gl_draw_glyphs(const RenderGlyphSpec* specs, int len,
     gl_append_vertex(p, x0, y0, u0, v0, rgba);
     gl_append_vertex(p + GL_QUAD_FLOATS, x0, y1, u0, v1, rgba);
     gl_append_vertex(p + 2 * GL_QUAD_FLOATS, x1, y0, u1, v0, rgba);
-    gl_append_vertex(p + 3 * GL_QUAD_FLOATS, x1, y0, u1, v0, rgba);
-    gl_append_vertex(p + 4 * GL_QUAD_FLOATS, x0, y1, u0, v1, rgba);
-    gl_append_vertex(p + 5 * GL_QUAD_FLOATS, x1, y1, u1, v1, rgba);
-    gl_quad_count += 6 * GL_QUAD_FLOATS;
+    gl_append_vertex(p + 3 * GL_QUAD_FLOATS, x1, y1, u1, v1, rgba);
+    gl_quad_count += GL_QUAD_VERTICES * GL_QUAD_FLOATS;
   }
 }
 
 static void gl_flush_glyphs(void) {
   size_t stride = GL_QUAD_FLOATS * sizeof(float);
   void* offset_color = (void*)(4 * sizeof(float));
-  size_t total;
+  size_t total, index_count;
 
   if (!gl_text_ready || !gl_has_drawables()) return;
   if (gl_quad_count > gl_vbo_capacity - gl_vbo_dynamic_start) {
@@ -809,8 +958,11 @@ static void gl_flush_glyphs(void) {
   if (!gl_vbo_capacity) return;
 
   total = gl_vbo_row_total + gl_quad_count;
+  index_count = total / GL_QUAD_FLOATS / GL_QUAD_VERTICES * GL_QUAD_INDICES;
   glUseProgram(gl_text_program);
   glBindBuffer(GL_ARRAY_BUFFER, gl_text_vbo);
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,
+               gl_index_32bit ? gl_text_ibo32 : gl_text_ibo);
   if (gl_quad_count) {
     glBufferSubData(GL_ARRAY_BUFFER,
                     (GLintptr)(gl_vbo_dynamic_start * sizeof(float)),
@@ -833,10 +985,13 @@ static void gl_flush_glyphs(void) {
   glEnable(GL_BLEND);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
   glDisable(GL_DEPTH_TEST);
-  glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(total / GL_QUAD_FLOATS));
+  gl_clear_if_pending();
+  glDrawElements(GL_TRIANGLES, (GLsizei)index_count,
+                 gl_index_32bit ? GL_UNSIGNED_INT : GL_UNSIGNED_SHORT, NULL);
   glDisableVertexAttribArray(gl_attr_position);
   glDisableVertexAttribArray(gl_attr_texcoord);
   glDisableVertexAttribArray(gl_attr_color);
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
   glBindBuffer(GL_ARRAY_BUFFER, 0);
   glUseProgram(0);
 
@@ -942,7 +1097,7 @@ static int gl_frame_begin(void) {
   gl_quad_count = 0;
   gl_eviction_logged = 0;
   memset(gl_row_submitted, 0, gl_row_submitted_count);
-  gl_clear_background();
+  gl_clear_pending = 1;
   return 1;
 }
 
@@ -980,6 +1135,7 @@ static void gl_resize(int col, int row) {
   gl_quad_count = 0;
   gl_viewport();
   gl_clear_background();
+  gl_clear_pending = 0;
   gl_present();
 }
 
